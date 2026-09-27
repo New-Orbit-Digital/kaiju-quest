@@ -1,4 +1,4 @@
-// Kaiju + tank visuals (Quaternius CC0 models) with a placeholder fallback.
+// Kaiju, tank and soldier visuals (Quaternius CC0 models) with placeholder fallbacks.
 import * as THREE from 'three';
 import { loadGLB } from './assets.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
@@ -9,20 +9,33 @@ import { TUNING } from '../../shared/tuning.js';
 const MODELS = {
   kaiju: {
     url: './assets/units/trex.glb',
-    yaw: 0,                    // model faces +z natively
+    yaw: 0,                    // faces +z natively
     fit: 'length', size: () => TUNING.kaijuLength,
     walk: 'Armature|TRex_Walk', idle: 'Armature|TRex_Idle',
+    attack: 'Armature|TRex_Attack', death: 'Armature|TRex_Death',
+    flash: true,
   },
   tank: {
     url: './assets/units/tank.glb',
-    yaw: Math.PI / 2,          // model faces -x natively
+    yaw: Math.PI / 2,          // faces -x natively
     fit: 'length', size: () => TUNING.tankLength,
     walk: 'TankArmature|Tank_Forward', idle: null,
     tintMaterial: 'Main',
   },
+  soldier: {
+    url: './assets/units/soldier.glb',
+    yaw: 0,                    // faces +z natively
+    fit: 'height', size: () => TUNING.soldierHeight,
+    walk: 'CharacterArmature|Run_Gun', idle: 'CharacterArmature|Idle',
+    shoot: 'CharacterArmature|Idle_Shoot', death: 'CharacterArmature|Death',
+    tintMaterial: 'Character_Main',
+    // the model carries a whole armoury; keep the body + one rifle
+    keepMeshes: ['Body', 'Head', 'ShoulderPad.L', 'ShoulderPad.R', 'AK'],
+  },
 };
 
 export const TANK_COLOURS = [0x4f7cff, 0xf5a524, 0xe5484d, 0xa35cf0, 0x2fbf71, 0xffffff];
+export const colourHex = (slot) => '#' + TANK_COLOURS[slot % TANK_COLOURS.length].toString(16).padStart(6, '0');
 
 const sources = {};
 export async function loadUnitModels() {
@@ -34,41 +47,46 @@ export async function loadUnitModels() {
 
 function placeholder(role, colour) {
   const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: role === 'kaiju' ? 0x3e9c4a : colour });
   if (role === 'kaiju') {
-    const mat = new THREE.MeshStandardMaterial({ color: 0x3e9c4a });
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.4, 0.7), mat);
     body.position.y = 0.7; g.add(body);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.6), mat);
-    head.position.set(0, 1.5, 0.25); g.add(head);
-  } else {
-    const mat = new THREE.MeshStandardMaterial({ color: colour });
+  } else if (role === 'tank') {
     const hull = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.2, 0.6), mat);
     hull.position.y = 0.12; g.add(hull);
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.45), mat);
-    gun.position.set(0, 0.28, 0.3); g.add(gun);
+  } else {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 0.08), mat);
+    body.position.y = 0.15; g.add(body);
   }
   return g;
 }
 
-// A drawn unit: outer group is positioned/rotated by game state.
+// A drawn unit: `object` is positioned/rotated by game state.
 export function createUnit(role, slot, isMine) {
-  const colour = role === 'tank' ? TANK_COLOURS[slot % TANK_COLOURS.length] : 0x3e9c4a;
+  const colour = role === 'kaiju' ? 0x3e9c4a : TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length];
   const outer = new THREE.Group();
   const m = MODELS[role];
   const src = sources[role];
-  let mixer = null, actions = {};
+  let mixer = null;
+  const actions = {};
+  const flashMats = [];
 
   if (src) {
     const model = SkeletonUtils.clone(src.scene);
-    // measure in native orientation (bones posed, skinning applied),
-    // then yaw so the model faces +z
+    if (m.keepMeshes) {
+      model.traverse(o => {
+        if (o.isMesh && !m.keepMeshes.includes(o.name) && !m.keepMeshes.includes(o.parent?.name)) o.visible = false;
+      });
+    }
+    // measure in native orientation (bones posed, skinning applied)
     model.updateMatrixWorld(true);
     model.traverse(o => { if (o.isSkinnedMesh) { o.skeleton.update(); o.computeBoundingBox(); } });
-    const box = new THREE.Box3().setFromObject(model, true);
+    const box = new THREE.Box3();
+    model.traverse(o => { if (o.isMesh && o.visible) box.expandByObject(o, true); });
     const size = box.getSize(new THREE.Vector3());
     const centre = box.getCenter(new THREE.Vector3());
     const length = Math.abs(Math.sin(m.yaw)) > 0.5 ? size.x : size.z;
-    const s = m.size() / length;
+    const s = m.size() / (m.fit === 'height' ? size.y : length);
     model.position.set(-centre.x, -box.min.y, -centre.z);
     const scaled = new THREE.Group();
     scaled.add(model);
@@ -80,11 +98,17 @@ export function createUnit(role, slot, isMine) {
 
     model.traverse(o => {
       if (!o.isMesh) return;
-      o.castShadow = TUNING.shadows;
+      o.castShadow = TUNING.shadows && role !== 'soldier';
       o.frustumCulled = false; // skinned meshes cull badly after rescale
       if (m.tintMaterial && o.material?.name === m.tintMaterial) {
         o.material = o.material.clone();
         o.material.color.set(colour);
+      }
+      if (m.flash) {
+        o.material = o.material.clone();
+        o.material.emissive = new THREE.Color(0xff2a1a);
+        o.material.emissiveIntensity = 0;
+        flashMats.push(o.material);
       }
     });
 
@@ -96,29 +120,55 @@ export function createUnit(role, slot, isMine) {
 
   // Ring under your own unit so you can find yourself.
   if (isMine) {
+    const big = role === 'kaiju';
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(role === 'kaiju' ? 0.55 : 0.36, role === 'kaiju' ? 0.68 : 0.46, 40),
-      new THREE.MeshBasicMaterial({ color: role === 'kaiju' ? 0x7dff8a : colour, transparent: true, opacity: 0.85 }));
+      new THREE.RingGeometry(big ? 0.55 : 0.36, big ? 0.68 : 0.46, 40),
+      new THREE.MeshBasicMaterial({ color: big ? 0x7dff8a : colour, transparent: true, opacity: 0.85, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.04;
     outer.add(ring);
   }
 
-  let current = null;
-  function play(name) {
+  let current = null, oneShotLeft = 0, flash = 0, dead = false;
+  function play(name, once = false) {
     if (!mixer || current === name) return;
     const next = name ? actions[name] : null;
-    if (current && actions[current]) actions[current].fadeOut(0.2);
-    if (next) next.reset().fadeIn(0.2).play();
+    if (current && actions[current]) actions[current].fadeOut(0.15);
+    if (next) {
+      next.reset();
+      next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity);
+      next.clampWhenFinished = once;
+      next.fadeIn(0.15).play();
+    }
     current = name;
   }
   play(m.idle);
 
   return {
     object: outer,
-    update(dt, moving) {
-      play(moving ? m.walk : m.idle);
+    role,
+    // moving/firing drive the looped animation; one-shots (attack) override briefly
+    update(dt, moving, firing = false) {
+      if (!dead) {
+        oneShotLeft = Math.max(0, oneShotLeft - dt);
+        if (oneShotLeft <= 0) play(firing && m.shoot ? m.shoot : moving ? m.walk : m.idle);
+      }
       mixer?.update(dt);
+      if (flashMats.length) {
+        flash = Math.max(0, flash - dt * 6);
+        for (const mat of flashMats) mat.emissiveIntensity = flash;
+      }
     },
+    attack() {
+      if (!m.attack || !actions[m.attack]) return;
+      current = null; play(m.attack, true);
+      oneShotLeft = actions[m.attack].getClip().duration * 0.8;
+    },
+    hit(amount = 1) { flash = Math.min(1.2, flash + 0.5 * amount); },
+    die() {
+      dead = true;
+      if (m.death && actions[m.death]) { current = null; play(m.death, true); }
+    },
+    revive() { dead = false; current = null; play(m.idle); },
   };
 }

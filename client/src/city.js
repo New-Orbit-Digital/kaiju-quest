@@ -50,6 +50,24 @@ function fitToLot(obj, lotSize) {
   return inner;
 }
 
+// One InstancedMesh per mesh inside `src`, placed at each matrix.
+function instanced(src, placements, { cast = false, receive = false } = {}) {
+  const group = new THREE.Group();
+  src.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(src.matrixWorld).invert();
+  const m = new THREE.Matrix4();
+  src.traverse(o => {
+    if (!o.isMesh) return;
+    const local = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
+    const im = new THREE.InstancedMesh(o.geometry, o.material, placements.length);
+    placements.forEach((p, i) => im.setMatrixAt(i, m.multiplyMatrices(p, local)));
+    im.castShadow = cast && TUNING.shadows; im.receiveShadow = receive && TUNING.shadows;
+    im.computeBoundingSphere();
+    group.add(im);
+  });
+  return group;
+}
+
 function shadowsOn(obj) {
   obj.traverse(o => { if (o.isMesh) { o.castShadow = TUNING.shadows; o.receiveShadow = TUNING.shadows; } });
 }
@@ -74,45 +92,49 @@ export async function buildCity(scene) {
   const parkMat = new THREE.MeshStandardMaterial({ color: 0x5f9a4a, roughness: 1 });
   const lotGeo = new THREE.BoxGeometry(1, 0.02, 1);
 
+  // Roads and lot slabs never change, so each tile model is drawn as one
+  // InstancedMesh (a handful of draw calls instead of ~600).
   const jobs = [];
+  const roadPlacements = new Map(); // model → [Matrix4]
+  const lots = [], parks = [];
+  const tmp = new THREE.Object3D();
   for (let z = 0; z < city.depth; z++) {
     for (let x = 0; x < city.width; x++) {
       if (isRoad(x, z)) {
         const mask = (isRoad(x, z - 1) ? N : 0) | (isRoad(x + 1, z) ? E : 0) |
                      (isRoad(x, z + 1) ? S : 0) | (isRoad(x - 1, z) ? W : 0);
         const { model, rot } = roadFor(mask);
-        jobs.push(load(A(model)).then(src => {
-          const o = src.clone();
-          o.position.set(x, 0, z);
-          o.rotation.y = rot;
-          o.traverse(m => { if (m.isMesh) m.receiveShadow = TUNING.shadows; });
-          root.add(o);
-        }));
+        tmp.position.set(x, 0, z); tmp.rotation.set(0, rot, 0); tmp.updateMatrix();
+        if (!roadPlacements.has(model)) roadPlacements.set(model, []);
+        roadPlacements.get(model).push(tmp.matrix.clone());
       } else {
-        const id = city.owner[z][x];
-        const kind = city.buildings[id]?.kind;
-        const slab = new THREE.Mesh(lotGeo, kind === 'park' ? parkMat : lotMat);
-        slab.position.set(x, 0.0, z);
-        slab.receiveShadow = TUNING.shadows;
-        root.add(slab);
+        const kind = city.buildings[city.owner[z][x]]?.kind;
+        (kind === 'park' ? parks : lots).push([x, z]);
       }
     }
   }
+  for (const [model, mats] of roadPlacements) {
+    jobs.push(load(A(model)).then(src => root.add(instanced(src, mats, { receive: true }))));
+  }
+  for (const [cells, mat] of [[lots, lotMat], [parks, parkMat]]) {
+    const im = new THREE.InstancedMesh(lotGeo, mat, cells.length);
+    cells.forEach(([x, z], i) => { tmp.position.set(x, 0, z); tmp.rotation.set(0, 0, 0); tmp.updateMatrix(); im.setMatrixAt(i, tmp.matrix); });
+    im.receiveShadow = TUNING.shadows;
+    root.add(im);
+  }
 
-  const buildingObjects = new Map(); // building id → Object3D (P02 damages these)
+  const buildingObjects = new Map(); // building id → Object3D (damaged / faded individually)
+  const trees = new Map();
   for (const b of city.buildings) {
     if (b.kind === 'park') {
       for (const [x, z] of b.cells) {
         const which = (x * 7 + z * 13) % 2 ? 'suburbs/tree-large' : 'suburbs/tree-small';
-        jobs.push(load(A(which)).then(src => {
-          for (const [ox, oz] of [[-0.25, -0.2], [0.22, 0.25], [0.2, -0.28]]) {
-            const t = src.clone();
-            t.position.set(x + ox, 0, z + oz);
-            t.scale.setScalar(1.3);
-            shadowsOn(t);
-            root.add(t);
-          }
-        }));
+        for (const [ox, oz] of [[-0.25, -0.2], [0.22, 0.25], [0.2, -0.28]]) {
+          tmp.position.set(x + ox, 0, z + oz); tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1.3); tmp.updateMatrix();
+          if (!trees.has(which)) trees.set(which, []);
+          trees.get(which).push(tmp.matrix.clone());
+        }
+        tmp.scale.setScalar(1);
       }
       continue;
     }
@@ -144,7 +166,11 @@ export async function buildCity(scene) {
     }));
   }
 
-  await Promise.all(jobs);
+  for (const [which, mats] of trees) jobs.push(load(A(which)).then(src => root.add(instanced(src, mats, { cast: true, receive: true }))));
+
+  // A missing model shouldn't stop the game from loading; log it and carry on.
+  const failed = (await Promise.allSettled(jobs)).filter(r => r.status === 'rejected');
+  if (failed.length) console.warn(`[city] ${failed.length} model(s) failed to load`, failed[0].reason);
   return { city, root, buildingObjects };
 }
 

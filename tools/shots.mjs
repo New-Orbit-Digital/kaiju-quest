@@ -1,63 +1,132 @@
-// Visual check: builds the client, starts the game server (which serves
-// the built client), joins as kaiju and as a tank in two browsers, drives both,
-// and saves screenshots to docs/shots/. Exits non-zero on failure.
-import { chromium } from 'playwright';
+// End-to-end check against a production build served by the game server:
+// a desktop KAIJU and an emulated-phone TANK (touch joystick) play a short
+// round. Checks sync, strikes, auto-fire, a stomp, phone-only markers, the
+// edge arrow and the end screen, and saves screenshots to docs/shots/.
+import { chromium, devices } from 'playwright';
 import { spawn, execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 
 const CHROME = ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find(existsSync);
-const PORT = 2599;
+const PORT = 2599, ROUND = 60;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+mkdirSync('docs/shots', { recursive: true });
 
-execSync('npm run build --prefix client', { stdio: 'inherit' });
-const server = spawn('node', ['server/src/index.js'], { env: { ...process.env, PORT: String(PORT) }, stdio: 'inherit' });
-await sleep(2500);
+execSync('npm run build --prefix client', { stdio: 'ignore' });
+const server = spawn('node', ['server/src/index.js'],
+  { env: { ...process.env, PORT: String(PORT), KQ_MATCH_SECONDS: String(ROUND) }, stdio: 'ignore' });
+await sleep(2000);
 
-// One browser per player: software GL in a single browser starves the second tab.
 const browsers = [];
-const launch = async () => { const b = await chromium.launch({
-  executablePath: CHROME,
-  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
-}); browsers.push(b); return b; };
-// the game server hosts the built client itself (same as on Render)
-const url = (role) => `http://localhost:${PORT}/?role=${role}`;
-const errors = [];
-async function open(role) {
-  const p = await (await launch()).newPage({ viewport: { width: 1280, height: 720 } });
-  p.on('pageerror', e => errors.push(`${role}: ${e.message}`));
-  p.on('console', m => { if (m.type() === 'error' && !m.text().includes('Failed to load resource')) errors.push(`${role}: ${m.text()}`); });
-  p.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('favicon.ico')) errors.push(`${role}: HTTP ${r.status()} ${r.url()}`); });
-  await p.goto(url(role), { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await p.waitForFunction(() => window.__kq?.room?.state?.players?.size >= 1, null, { timeout: 60000 });
+const launch = async () => { const b = await chromium.launch({ executablePath: CHROME,
+  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] }); browsers.push(b); return b; };
+const errors = [], fxLog = [];
+async function open(name, contextOpts, query) {
+  const ctx = await (await launch()).newContext(contextOpts);
+  const p = await ctx.newPage();
+  p.on('pageerror', e => errors.push(`${name}: ${e.message}`));
+  p.on('console', m => { if (m.type() === 'error' && !m.text().includes('Failed to load resource')) errors.push(`${name}: ${m.text()}`); });
+  p.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('favicon.ico')) errors.push(`${name}: HTTP ${r.status()} ${r.url()}`); });
+  await p.goto(`http://localhost:${PORT}/${query}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await p.waitForFunction(() => window.__kq?.room?.state?.players?.size >= 1, null, { timeout: 90000 });
   return p;
 }
+const me = (p) => p.evaluate(() => { const r = window.__kq.room, s = r.state, m = s.players.get(r.sessionId);
+  return { role: m.role, mobile: m.mobile, x: m.x, z: m.z, alive: m.alive, phase: s.phase, hp: s.kaijuHp, max: s.kaijuMaxHp,
+           score: s.kaijuScore, n: s.players.size, soldiers: m.soldiers.length, isMobile: window.__kq.mobile }; });
 const hold = async (p, key, ms) => { await p.keyboard.down(key); await sleep(ms); await p.keyboard.up(key); };
-const pos = (p) => p.evaluate(() => { const r = window.__kq.room; const me = r.state.players.get(r.sessionId); return { role: me.role, x: me.x, z: me.z, n: r.state.players.size }; });
+async function until(cond, maxMs = 15000) { const t0 = Date.now(); while (!(await cond()) && Date.now() - t0 < maxMs) await sleep(40); }
+async function holdUntil(p, key, cond) { await p.keyboard.down(key); await until(cond); await p.keyboard.up(key); }
+async function stick(p, dx, dy, cond) {   // drag the on-screen joystick until cond() is true
+  const box = await p.locator('#kq-stick').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await p.mouse.move(cx, cy); await p.mouse.down(); await p.mouse.move(cx + dx, cy + dy, { steps: 4 });
+  await until(cond); await p.mouse.up();
+}
+const fps = (p) => p.evaluate(() => new Promise(res => { let n = 0; const t0 = performance.now();
+  const f = () => { n++; if (performance.now() - t0 < 2000) requestAnimationFrame(f); else res(n / 2); }; requestAnimationFrame(f); }));
 
 let ok = true;
 const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if (!cond) ok = false; };
 try {
-  const kaiju = await open('kaiju');
-  const tank = await open('tank');
-  await sleep(1500);
-  const k0 = await pos(kaiju), t0 = await pos(tank);
-  check(k0.role === 'kaiju' && t0.role === 'tank', `roles: ${k0.role} / ${t0.role}`);
-  check(k0.n === 2 && t0.n === 2, `both clients see 2 players (${k0.n}, ${t0.n})`);
-  await kaiju.screenshot({ path: 'docs/shots/p01-kaiju-start.png' });
-  await tank.screenshot({ path: 'docs/shots/p01-tank-start.png' });
+  const kaiju = await open('kaiju', { viewport: { width: 1100, height: 620 } }, '?role=kaiju');
+  // Pixel 7 in landscape, DPR 1 to keep software rendering bearable
+  const phone = await open('phone', { ...devices['Pixel 7 landscape'], deviceScaleFactor: 1 }, '');
+  await kaiju.evaluate(() => { window.__fx = []; window.__kq.room.onMessage('fx', (e) => window.__fx.push(e.type)); });
+  await sleep(1000);
+  let k = await me(kaiju), t = await me(phone);
+  check(k.role === 'kaiju' && t.role === 'tank' && t.mobile && t.isMobile, `roles: desktop=${k.role}, phone=${t.role} (mobile flag ${t.mobile})`);
+  check(t.soldiers === 4, `tank has a squad of ${t.soldiers}`);
+  check(await phone.locator('#kq-stick').isVisible() && await phone.locator('#kq-boost').isVisible(), 'phone shows joystick + boost button');
+  check(!(await kaiju.locator('#kq-stick').count()), 'desktop has no touch controls');
 
-  // kaiju: W (north) then D (east); tank: S (south, down col 0) then D (east, along row 3)
-  await Promise.all([hold(kaiju, 'KeyW', 900), hold(tank, 'KeyS', 900)]);
-  await Promise.all([hold(kaiju, 'KeyD', 900), hold(tank, 'KeyD', 1400)]);
-  await sleep(500);
-  const k1 = await pos(kaiju), t1 = await pos(tank);
-  check(k1.z < k0.z - 1 && k1.x > k0.x + 1, `kaiju moved north+east: (${k0.x},${k0.z}) → (${k1.x.toFixed(2)},${k1.z.toFixed(2)})`);
-  check(t1.x > t0.x + 1 && t1.z > t0.z + 1, `tank moved south+east: (${t0.x},${t0.z}) → (${t1.x.toFixed(2)},${t1.z.toFixed(2)})`);
-  await kaiju.screenshot({ path: 'docs/shots/p01-kaiju-moved.png' });
-  await tank.screenshot({ path: 'docs/shots/p01-tank-moved.png' });
+  await sleep(3500);  // countdown
+  k = await me(kaiju);
+  check(k.phase === 'playing' && k.hp === 100 && k.max === 100, `round live: phase=${k.phase}, kaiju HP ${k.hp}/${k.max}`);
 
-  // tank drives toward the kaiju so both appear in one frame
-  await tank.evaluate(() => { window.__kq.room.send('input', { x: 0, z: 0 }); });
+  // Kaiju steps one tile north (tower to its west), then smashes it 3 times
+  await holdUntil(kaiju, 'KeyW', () => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z <= 11.05; }));
+  const hp0 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
+  for (let i = 0; i < 3; i++) { await kaiju.keyboard.press('KeyE'); await sleep(650); }
+  const hp1 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
+  const hit = hp0.map((h, i) => h - hp1[i]).reduce((a, b) => a + b, 0);
+  check(hit === 30, `3 strikes took ${hit} building HP (expected 30)`);
+  await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-smash.png' });
+
+  // Phone tank: joystick down-left on screen = south along the street → (0,3)
+  await stick(phone, -45, 45, () => phone.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z >= 2.7; }));
+  t = await me(phone);
+  check(t.z > 2 && Math.abs(t.x) < 0.3, `joystick drove the tank down its street: (${t.x.toFixed(2)}, ${t.z.toFixed(2)})`);
+  // Boost from the phone button
+  await phone.locator('#kq-boost').dispatchEvent('pointerdown');
+  await until(() => phone.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; }), 5000);
+  const boosting = await phone.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; });
+  check(boosting, 'boost button triggers boost + cooldown');
+
+  await sleep(800);
+  await phone.screenshot({ path: 'docs/shots/p02-phone-edge-arrow.png' });
+  check(await phone.evaluate(() => !document.getElementById('kq-edge').hidden), 'phone: edge arrow points to the off-screen kaiju');
+
+  // Kaiju: north up column 12 to row 3, then west toward the tank
+  await holdUntil(kaiju, 'KeyW', () => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z <= 3.05; }));
+  await kaiju.keyboard.down('KeyA');
+  let shotSeen = false, markerSeen = false, stomped = false;
+  for (let i = 0; i < 60 && !stomped; i++) {
+    await sleep(200);
+    const fx = await kaiju.evaluate(() => window.__fx);
+    shotSeen ||= fx.includes('shot');
+    stomped = fx.includes('tankDown');
+    if (shotSeen && !markerSeen && (await phone.locator('.kq-marker:not([hidden])').count()) > 0) {
+      markerSeen = true;
+      await phone.screenshot({ path: 'docs/shots/p02-phone-marker-firing.png' });
+      await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-under-fire.png' });
+    }
+  }
+  await kaiju.keyboard.up('KeyA');
+  k = await me(kaiju); t = await me(phone);
+  check(shotSeen && k.hp < k.max, `tank + squad auto-fired: kaiju HP ${k.hp.toFixed(2)}/${k.max}`);
+  check(markerSeen, 'phone: marker shown over the kaiju');
+  check(!(await kaiju.locator('.kq-marker:not([hidden])').count()) && !(await kaiju.locator('#kq-edge:not([hidden])').count()),
+    'desktop kaiju: no markers and no arrows to tanks');
+  const fxAll = await kaiju.evaluate(() => window.__fx);
+  check(stomped && k.score >= 50 && (!t.alive || fxAll.includes('respawn')), `kaiju stomped the tank: score ${k.score} (tankDown events: ${fxAll.filter(x => x === 'tankDown').length})`);
+  await sleep(300);
+  await phone.screenshot({ path: 'docs/shots/p02-phone-crushed.png' });
+  await until(() => me(phone).then(m => m.alive), 12000);
+  t = await me(phone); k = await me(kaiju);
+  const d = Math.hypot(t.x - k.x, t.z - k.z);
+  check(t.alive && d >= 12, `tank respawned ${d.toFixed(1)} tiles from the kaiju`);
+
+  const [fk, fp] = [await fps(kaiju), await fps(phone)];
+  console.log(`INFO  fps in headless software GL (not a real device): desktop ${fk}, phone ${fp}`);
+
+  // Let the timer run out → kaiju wins, end screen shows
+  await kaiju.waitForFunction(() => window.__kq.room.state.phase === 'ended', null, { timeout: (ROUND + 10) * 1000 });
+  await sleep(600);
+  k = await me(kaiju);
+  const endText = await kaiju.locator('#kq-end').innerText();
+  check(/KAIJU WINS/.test(endText), `end screen: "${endText.split('\n')[0]}"`);
+  await kaiju.screenshot({ path: 'docs/shots/p02-end-screen.png' });
+  await phone.screenshot({ path: 'docs/shots/p02-phone-end.png' });
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
 } catch (e) {
   console.error(e); ok = false;

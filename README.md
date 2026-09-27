@@ -2,7 +2,9 @@
 
 Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to three players drive **tanks**, trying to kill it. WASD + E.
 
-**Status:** Packet 01 (foundation) plus a playtest deploy. The city, the camera, and a kaiju and tanks moving on streets across browsers all work. Combat, soldiers and scoring come in Packet 02.
+**Status:** Packet 02 is playable: the full combat loop (strikes, rubble, auto-firing tanks, soldiers, stomps, boost, respawns, a 5-minute round and an end screen) plus phone support for tanks. The lobby and a polish pass come in Packet 03.
+
+Live playtest: https://kaiju-quest.onrender.com. Open it on a phone to drive a tank with the on-screen joystick.
 
 ## Playtest (Render)
 
@@ -27,7 +29,8 @@ Without `?role`, the first player to join becomes the kaiju and everyone after t
 
 | What | File |
 |---|---|
-| Every gameplay number (speeds, HP, damage, camera, controls) | `shared/tuning.js` |
+| Every gameplay number (speeds, HP, damage, timers, camera, controls, phone settings) | `shared/tuning.js` |
+| The rules (rounds, strikes, firing, stomps, respawns, scoring) | `shared/game.js` |
 | The city layout (ASCII map, one character per tile) and spawn points | `shared/map.js` |
 | Which Kenney model goes on which lot, and road tiling | `client/src/city.js` |
 | Which building model sits on which lot | `client/src/cityplan.js` |
@@ -38,8 +41,8 @@ Restart the server after changing `shared/`. Vite reloads the client on its own.
 ## Tests
 
 ```bash
-npm test          # map, movement, collision and scaling rules + a live two-client server test
-npm run shots     # builds the client, drives a kaiju and a tank in two headless browsers, saves docs/shots/*.png
+npm test          # 22 tests: rules, movement, collisions, scaling + a live two-client server test
+npm run shots     # builds the client, plays a short round with a desktop kaiju vs an emulated-phone tank, saves docs/shots/p02-*.png
 node tools/build-sandbox.mjs   # single-file offline sandbox (client/dist-sandbox/kaiju-sandbox.html)
 ```
 

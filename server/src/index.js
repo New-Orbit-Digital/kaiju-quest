@@ -4,6 +4,10 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { KaijuRoom } from './KaijuRoom.js';
+import { TUNING } from '../../shared/tuning.js';
+
+// Test hook: shorter rounds for automated checks (never set in production).
+if (process.env.KQ_MATCH_SECONDS) TUNING.matchSeconds = Number(process.env.KQ_MATCH_SECONDS);
 
 // When the client has been built (client/dist), this server also hosts it,
 // so one Render service = one URL to share for playtests.

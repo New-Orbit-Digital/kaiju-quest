@@ -11,6 +11,10 @@ addEventListener('blur', () => { down.clear(); changed(); });
 
 export function isDown(code) { return down.has(code); }
 
+// Touch joystick: a screen-space vector (x right, y up, length ≤ 1), or null.
+let touch = null;
+export function setTouchVector(v) { touch = v; changed(); }
+
 // Screen axes on the ground for a camera at the given azimuth.
 function screenAxes() {
   const az = TUNING.cameraAzimuthDeg * Math.PI / 180;
@@ -30,6 +34,7 @@ function streetAxes() {
 }
 
 export function moveVector() {
+  if (touch) return touchToWorld(touch);
   const { fwd, right } = TUNING.controlScheme === 'screen' ? screenAxes() : streetAxes();
   let f = 0, r = 0;
   if (down.has('KeyW')) f += 1;
@@ -39,5 +44,19 @@ export function moveVector() {
   let x = fwd.x * f + right.x * r, z = fwd.z * f + right.z * r;
   const len = Math.hypot(x, z);
   if (len > 1) { x /= len; z /= len; }
+  return { x: Math.round(x * 1000) / 1000, z: Math.round(z * 1000) / 1000 };
+}
+
+// Joystick: push the stick where you want to go on screen. With joystickSnap
+// on, it picks the nearest of the 4 street directions (streets run diagonally
+// on screen), which keeps tanks from grinding into corners.
+function touchToWorld(t) {
+  const { fwd, right } = screenAxes();
+  let x = fwd.x * t.y + right.x * t.x, z = fwd.z * t.y + right.z * t.x;
+  const len = Math.hypot(x, z);
+  if (len < 1e-3) return { x: 0, z: 0 };
+  if (TUNING.joystickSnap) {
+    if (Math.abs(x) > Math.abs(z)) { x = Math.sign(x); z = 0; } else { z = Math.sign(z); x = 0; }
+  } else if (len > 1) { x /= len; z /= len; }
   return { x: Math.round(x * 1000) / 1000, z: Math.round(z * 1000) / 1000 };
 }

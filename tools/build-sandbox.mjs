@@ -6,7 +6,7 @@ import { parseCity } from '../shared/map.js';
 import { modelForBuilding, ROAD_MODELS, TREE_MODELS } from '../client/src/cityplan.js';
 
 const A = 'client/public/assets/';
-const keys = new Set(['units/trex.glb', 'units/tank.glb']);
+const keys = new Set(['units/trex.glb', 'units/tank.glb', 'units/soldier.glb']);
 for (const m of [...ROAD_MODELS, ...TREE_MODELS]) keys.add(`city/${m}.glb`);
 for (const b of parseCity().buildings) if (b.kind !== 'park') keys.add(`city/${modelForBuilding(b)}.glb`);
 for (const k of [...keys]) if (k.startsWith('city/')) keys.add(k.split('/').slice(0, 2).join('/') + '/Textures/colormap.png');
