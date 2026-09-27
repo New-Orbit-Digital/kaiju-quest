@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../../shared/tuning.js';
 import { colourHex } from './units.js';
+import { keyNames } from './input.js';
 
 const CSS = `
 [hidden] { display: none !important; }
@@ -248,8 +249,9 @@ export function createHud({ mobile }) {
       } else if (playing && me.role === 'tank' && !me.alive) {
         b = `Crushed!<small>Back in action in ${Math.max(1, Math.ceil(me.respawnIn))}</small>`;
       } else if (playing && state.clock > T0() - 2.5) {
-        b = me.role === 'kaiju' ? 'SMASH!<small>SPACE next to a building or roadblock · walk into tanks and soldiers</small>'
-                                : 'HUNT THE KAIJU<small>Turret fires on its own · SPACE boost · SHIFT roadblock · park by damaged buildings to repair</small>';
+        const k = keyNames();
+        b = me.role === 'kaiju' ? `SMASH!<small>${k.smash} next to a building or roadblock · walk into tanks and soldiers</small>`
+                                : `HUNT THE KAIJU<small>Turret fires on its own · ${k.boost} boost · ${k.block} roadblock · park by damaged buildings to repair</small>`;
       }
       banner.hidden = !b; banner.innerHTML = b; banner.classList.toggle('big', big);
 
@@ -273,10 +275,11 @@ export function createHud({ mobile }) {
         const total = kaijuSide ? TUNING.strikeCooldown : TUNING.boostCooldown;
         const ready = left <= 0;
         ability.classList.toggle('ready', ready);
+        const k = keyNames();
         ability.querySelector('span').textContent = kaijuSide
-          ? (ready ? 'SPACE  SMASH — ready' : 'SPACE  SMASH')
-          : (me.boosting ? 'BOOSTING' : ready ? 'SPACE  BOOST — ready' : `SPACE  BOOST  ${Math.ceil(left)}s`) +
-            (me.blockIn > 0 ? `   ·   SHIFT  BLOCK  ${Math.ceil(me.blockIn)}s` : '   ·   SHIFT  BLOCK — ready');
+          ? (ready ? `${k.smash}  SMASH — ready` : `${k.smash}  SMASH`)
+          : (me.boosting ? 'BOOSTING' : ready ? `${k.boost}  BOOST — ready` : `${k.boost}  BOOST  ${Math.ceil(left)}s`) +
+            (me.blockIn > 0 ? `   ·   ${k.block}  BLOCK  ${Math.ceil(me.blockIn)}s` : `   ·   ${k.block}  BLOCK — ready`);
         ability.querySelector('.bar i').style.width = `${(1 - left / total) * 100}%`;
       }
 

@@ -121,6 +121,8 @@ export const TUNING = {
   cameraElevationDeg: 50,    // camera tilt: 35.264 = true isometric, 90 = straight down
   cameraAzimuthDeg:   45,    // camera turn around the city
   cameraFollow:       8.0,   // how tightly the camera follows you (higher = snappier)
+  gamepadSnap:        true,  // controller stick snaps to the 4 street directions
+  gamepadDeadzone:    0.3,   // share of the controller stick that does nothing (0–1)
   controlScheme:      'street', // 'street': WASD follows the streets (W = up-right)
                                 // 'screen': W = straight up the screen
   occluderOpacity:    0.22,  // buildings in front of a unit fade to this (0 = invisible)
@@ -133,6 +135,11 @@ export const TUNING = {
   tankRadius:         0.25,  // tank hitbox half-width
   soldierRadius:      0.12,  // soldier hitbox half-width
   laneAssist:         6.0,   // how fast units slide to the middle of the street (corners)
+  streetWiden:        0.1,   // extra road on each side of a street, in tiles
+                             // (0.1 = streets 20% wider; above ~0.12 units clip building edges)
+  cornerLookahead:    0.8,   // steer into a side street up to this many tiles early and
+                             // you keep rolling, then turn when it lines up (0 = off)
+  cornerNudge:        0.35,  // pushing into a wall this close to an opening slides you into it
   buildingFootprint:  0.78,  // how much of its lot a building fills (also sets height)
   tickRate:           20,    // server updates per second
 };

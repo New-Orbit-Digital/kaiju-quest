@@ -3,7 +3,7 @@ import { Client } from '@colyseus/sdk';
 import { TUNING } from '../../shared/tuning.js';
 import { buildCity, fadeOccluders } from './city.js';
 import { loadUnitModels, createUnit, colourHex, TANK_COLOURS } from './units.js';
-import { moveVector, onInputChange } from './input.js';
+import { moveVector, onInputChange, pollGamepad, usingGamepad, keyNames } from './input.js';
 import { createLocalRoom } from './localroom.js';
 import { initFx, createBuildingDamage, createRoadblocks } from './fx.js';
 import { createHud } from './hud.js';
@@ -217,14 +217,15 @@ function updateSideHud(me) {
   const swatch = me.role === 'tank' ? `<span style="color:${colourHex(me.slot)}">■</span> ` : '';
   let tanks = 0;
   room.state.players.forEach(p => { if (p.role === 'tank') tanks++; });
+  const k = keyNames();
   const help = me.role === 'kaiju'
-    ? 'WASD move · SPACE smash the building beside you<br>Walk into tanks & soldiers to crush them'
-    : `WASD move · turret fires on its own<br>SPACE boost · SHIFT drop roadblock<br>Drive near damaged buildings to repair them`;
+    ? `${k.move} move · ${k.smash} smash the building beside you<br>Walk into tanks & soldiers to crush them`
+    : `${k.move} move · turret fires on its own<br>${k.boost} boost · ${k.block} drop roadblock<br>Drive near damaged buildings to repair them`;
   hudBody.innerHTML =
     `You are ${swatch}<span class="role-${me.role}">${roleName}</span><br>` +
     `Tanks: ${tanks}/${TUNING.maxTanks} · Kaiju speed ${room.state.kaijuSpeed.toFixed(2)}<br>` +
     `<span class="dim">${help}` +
-    (room.offline ? `<br>Tab swap unit · C camera · V controls` : '') + `</span>`;
+    (room.offline ? (usingGamepad() ? `<br>Y swap unit` : `<br>Tab swap unit · C camera · V controls`) : '') + `</span>`;
 }
 
 // ── Input → server ─────────────────────────────────────────
@@ -240,6 +241,24 @@ function sendInput(now) {
 }
 onInputChange(() => sendInput(performance.now())); // react on the key event, not the next frame
 
+function myRole() { return room?.state?.players?.get(room.sessionId)?.role; }
+
+// Controller buttons (standard layout). A / ✕ / Switch-B (0) = kaiju smash or
+// tank roadblock. Tank boost = right face button (1), RB/R1 (5) or RT/R2 (7).
+function gamepadButtons() {
+  const pressed = pollGamepad();
+  if (!room || !pressed.length) return;
+  const tank = myRole() === 'tank';
+  for (const b of pressed) {
+    if (b === 0) room.send(tank ? 'block' : 'action');
+    else if (tank && (b === 1 || b === 5 || b === 7)) room.send('action');
+    else if (b === 9 && !room.offline && room.state.phase === 'lobby') { // Start / Menu / +: toggle ready
+      room.send('ready', { ready: !room.state.players.get(room.sessionId)?.ready });
+    }
+    else if (room.offline && b === 3) { room.cycle(1); clearUnits(); lastSent = ''; } // Y: swap unit (sandbox)
+  }
+}
+
 function clearUnits() {
   for (const u of units.values()) scene.remove(u.view.object);
   for (const e of squads.values()) scene.remove(e.view.object);
@@ -247,8 +266,14 @@ function clearUnits() {
 }
 addEventListener('keydown', (e) => {
   if (!room) return;
-  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) room.send('action'); } // smash / boost
-  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) room.send('block'); // tank roadblock
+  // Kaiju: Space = smash. Tank: Shift = boost, Space = roadblock.
+  const isShift = e.code === 'ShiftLeft' || e.code === 'ShiftRight';
+  if (e.code === 'Space') e.preventDefault();
+  if (!e.repeat && (e.code === 'Space' || isShift)) {
+    const tank = myRole() === 'tank';
+    if (e.code === 'Space') room.send(tank ? 'block' : 'action');
+    else if (tank) room.send('action');
+  }
   if (!room.offline) return;
   // Sandbox-only keys: Tab swaps unit, C camera angle, V controls.
   if (e.code === 'Tab') {
@@ -269,6 +294,7 @@ const timer = new THREE.Timer();
 function frame(ts) {
   timer.update(ts);
   const dt = Math.min(timer.getDelta(), 0.1);
+  gamepadButtons();
   sendInput(performance.now());
   syncUnits(dt);
   fx.update(dt);

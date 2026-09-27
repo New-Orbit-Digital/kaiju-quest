@@ -1,6 +1,6 @@
 # Kaiju Quest
 
-Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to three players drive **tanks**, trying to kill it. WASD + Space (smash / boost) + Shift (tank roadblock).
+Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to three players drive **tanks**, trying to kill it. WASD + Space (kaiju smash / tank roadblock) + Shift (tank boost), or a controller: left stick moves, A (✕ on PlayStation, B on Switch) smashes / drops a roadblock, RB boosts.
 
 **Status:** playable. Full combat loop (strikes, rubble, auto-firing tanks, soldiers, stomps, boost, respawns, a 5-minute round and an end screen), tank repairs and roadblocks, phone support for tanks, a ready-up lobby with player names, and bots.
 

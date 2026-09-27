@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-//  KAIJU QUEST — THE CITY (v1 fixed map)
+//  KAIJU QUEST — THE CITY (v2 fixed map, 31×31)
 //  One character = one tile. Edit freely; keep every row the same
 //  length and keep every building lot touching a street.
 //
@@ -9,40 +9,52 @@
 //    t  tower fill        g  park (blocked for everyone, has trees)
 //
 //  North is the top row. x grows to the right, z grows downward.
+//
+//  Districts: NW suburb grid · NE long east–west blocks (hide behind
+//  them) · W long north–south blocks · downtown towers round a park
+//  plaza · E industrial rail yard · SW suburb · SE long north–south
+//  blocks. Rows 0, 3, 6, 9, 20, 30 and columns 0 and 30 run the full
+//  width with no turns.
 // ─────────────────────────────────────────────────────────────
 
 export const CITY = `
-#########################
-#hh#hh#hh#hh#hh#cc#hh#cc#
-#hh#hh#hh#hh#hh#ch#hh#hc#
-#########################
-#hh#hh#hh#hh#hc#hh#gg#hh#
-#hh#hh#hh#hh#hh#hh#gg#hh#
-#hh###################hh#
-#hh#hh#cc#ch#hh#cc#hh#ch#
-#hh#hh#cc#cc#cc#cc#hh#hc#
-####hh###################
-#hh#hh#cc#Tt#Tt#cc#cc#hh#
-#hh#hh#cc#tt#tt#cc#cc#hh#
-#########################
-#hh#hh#cc#Tt#Tt#cc#ii#ii#
-#hh#hh#ci#tt#tt#cc#ii#ii#
-######################ii#
-#hh#hh#ic#cc#cc#cc#ii#ii#
-#hh#hh#cc#cc#cc#ic#ii#ii#
-#hh################ii####
-#hh#gg#hh#hh#ii#ii#ii#ii#
-#hh#gg#hh#hh#ii#ii#ii#ii#
-################ii#######
-#hh#hh#hh#hh#ii#ii#ii#ii#
-#hh#hh#hh#hh#ii#ii#ii#ii#
-#########################
+###############################
+#hhch#hhhh#hhcc#cTtccTtcccTtcc#
+#hhhh#hchh#hhhc#cttccttcccttcc#
+###############################
+#hhhh#chhh#hhhh#ccchhc#iiiiiii#
+#hghh#hhhh#hhch#chhhcc#iicciii#
+###############################
+#hhhh#hhcchhcch#iiiiiicccc#hhh#
+#hhhh#hhhhhcchh#iiiiccccic#hch#
+###############################
+#hh#cc#cc#Tt#Tt#Tt#Tt#iiiiiiii#
+#hh#ch#ci#tt#tt#tt#tt#iiiicccc#
+#hh#hc#cc######################
+#hh#cc#ii#cc#ggggg#cc#iiiiiiii#
+#hh#cc####cc#ggggg#cc#iggggggi#
+#hh#hh#ii#cc#ggggg#ic#iggggggi#
+#hh#cc#ic#ci#ggggg#cc#iiiiiiii#
+#hh#ch#cc######################
+#hh#cc#ci#Tt#Tt#Tt#Tt#ciiiiiii#
+#hh#cc#cc#tt#tt#tt#tt#cciiiiii#
+###############################
+#hhhhchhhh#hhhh#cc#cc#hh#hh#cc#
+#hhhhhhhch#hchh#hc#cc#hh#hh#hc#
+################hh#ci#hc#hh#hh#
+#hhhh#hhhh#chhh#ch#ii#cc#hc#hh#
+#hhhh#hhhh#hhhc####ii####hh#hh#
+################hh#ii#hh#hh#hh#
+#hhhh#hhhh#hhhh#hh#ic#ch#ch#hh#
+#hggh#hggh#hggh#ch#cc#hh#hh#ch#
+#hhhh#hhch#hhhh#hh#cc#hh#hh#hh#
+###############################
 `;
 
 // Where things start. Tiles, not pixels. Must be street tiles.
 export const SPAWNS = {
-  kaiju: { x: 12, z: 12 },
-  tanks: [ { x: 0, z: 0 }, { x: 24, z: 0 }, { x: 0, z: 24 }, { x: 24, z: 24 } ],
+  kaiju: { x: 15, z: 12 },
+  tanks: [ { x: 0, z: 0 }, { x: 30, z: 30 }, { x: 30, z: 0 }, { x: 0, z: 30 }, { x: 15, z: 0 }, { x: 15, z: 30 } ],
 };
 
 const KIND = { h: 'house', c: 'commercial', i: 'industrial', T: 'tower', g: 'park' };

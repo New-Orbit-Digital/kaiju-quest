@@ -4,6 +4,7 @@ import { createGame, plainMake, inKaijuView } from '../../shared/game.js';
 import { TUNING as T, kaijuMaxHpFor, kaijuSpeedFor } from '../../shared/tuning.js';
 import { tileWalkable } from '../../shared/sim.js';
 import { createBots } from '../../shared/bots.js';
+import { SPAWNS } from '../../shared/map.js';
 
 // Helper: a game with a kaiju + n tanks, already in the 'playing' phase.
 function setup(nTanks = 1, opts = {}) {
@@ -297,7 +298,7 @@ test('next round resets buildings, score and positions', () => {
   assert.equal(state.phase, 'playing');
   assert.equal(state.buildingHp[bid], T.buildingHp.house);
   assert.equal(state.kaijuScore, 0);
-  assert.equal(K.x, 12); assert.equal(K.z, 12);
+  assert.equal(K.x, SPAWNS.kaiju.x); assert.equal(K.z, SPAWNS.kaiju.z);
 });
 
 test('a tank joining mid-round adds kaiju HP and speed', () => {
@@ -308,7 +309,7 @@ test('a tank joining mid-round adds kaiju HP and speed', () => {
   assert.equal(state.kaijuHp, 170);
   assert.ok(Math.abs(state.kaijuSpeed - kaijuSpeedFor(2)) < 1e-9);
   const t1 = state.players.get('T1');
-  assert.ok(Math.hypot(t1.x - 12, t1.z - 12) >= T.respawnMinDistance, 'joins away from the kaiju');
+  assert.ok(Math.hypot(t1.x - SPAWNS.kaiju.x, t1.z - SPAWNS.kaiju.z) >= T.respawnMinDistance, 'joins away from the kaiju');
 });
 
 test('bots: a bot kaiju smashes buildings and bot tanks close in and fire', () => {

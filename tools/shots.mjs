@@ -102,16 +102,32 @@ try {
   k = await me(kaiju);
   check(k.phase === 'playing' && k.hp === 100 && k.max === 100, `round live: phase=${k.phase}, kaiju HP ${k.hp}/${k.max}`);
 
-  // Kaiju steps one tile north (tower to its west), then smashes it 3 times
+  // Kaiju steps one tile north (towers either side), then smashes 3 times
   await holdUntil(kaiju, 'KeyW', () => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z <= 11.05; }));
   const hp0 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
   for (let i = 0; i < 3; i++) { await kaiju.keyboard.press('Space'); await sleep(650); }
   const hp1 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
   const hit = hp0.map((h, i) => h - hp1[i]).reduce((a, b) => a + b, 0);
   check(hit === 30, `3 strikes took ${hit} building HP (expected 30)`);
+  // Controller: a fake standard-layout pad; A (button 0) = kaiju smash
+  await kaiju.evaluate(() => {
+    const pad = (a) => ({ axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === 0 && a, value: i === 0 && a ? 1 : 0 })) });
+    window.__pad = pad(false);
+    navigator.getGamepads = () => [window.__pad];
+    window.__padPress = (a) => { window.__pad = pad(a); };
+  });
+  await sleep(700);
+  await kaiju.evaluate(() => window.__padPress(true));
+  await until(() => kaiju.evaluate((h) => Array.from(window.__kq.room.state.buildingHp).reduce((a, b) => a + b, 0) < h,
+    hp1.reduce((a, b) => a + b, 0)), 8000);
+  await kaiju.evaluate(() => window.__padPress(false));
+  const hp2 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
+  const padHit = hp1.map((h, i) => h - hp2[i]).reduce((a, b) => a + b, 0);
+  check(padHit === 10, `controller A button smashed: ${padHit} building HP (expected 10)`);
+  await kaiju.evaluate(() => { navigator.getGamepads = () => []; });
   await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-smash.png' });
 
-  // Phone tank: joystick down-left on screen = south along the street → (0,3)
+  // Phone tank: joystick down-left on screen = south along the ring road → (0,3)
   await stick(phone, -45, 45, () => phone.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z >= 2.7; }));
   t = await me(phone);
   check(t.z > 2 && Math.abs(t.x) < 0.3, `joystick drove the tank down its street: (${t.x.toFixed(2)}, ${t.z.toFixed(2)})`);
@@ -129,7 +145,7 @@ try {
   await phone.screenshot({ path: 'docs/shots/p02-phone-edge-arrow.png' });
   check(await phone.evaluate(() => !document.getElementById('kq-edge').hidden), 'phone: edge arrow points to the off-screen kaiju');
 
-  // Kaiju: north up column 12 to row 3, then west toward the tank
+  // Kaiju: north up column 15 to row 3, then west toward the tank
   await holdUntil(kaiju, 'KeyW', () => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z <= 3.05; }));
   await kaiju.keyboard.down('KeyA');
   let shotSeen = false, markerSeen = false, stomped = false;
