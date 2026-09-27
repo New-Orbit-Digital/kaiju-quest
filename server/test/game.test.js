@@ -66,6 +66,20 @@ test('SPACE strike: damage is permanent building HP; destroyed → rubble + poin
   assert.equal(tileWalkable(g.city, 'tank', 1, 4, g.destroyed), false);
 });
 
+test('strikeRange: 1 reaches only the building beside the kaiju; 2 reaches further', () => {
+  const { g, state, K, T0, place } = setup(1);
+  place(T0, 24, 24);
+  place(K, 12, 12);                   // crossroad: no building touches this tile
+  const total = () => state.buildingHp.reduce((a, b) => a + b, 0);
+  const before = total();
+  g.action('K'); g.tick(0.05);
+  assert.equal(total(), before, 'nothing within 1 tile of a crossroad centre');
+  T.strikeRange = 1.5;                // diagonals: the towers around (12,12)
+  g.tick(T.strikeCooldown + 0.05); g.action('K'); g.tick(0.05);
+  assert.equal(total(), before - T.strikeDamage);
+  T.strikeRange = 1;
+});
+
 test('strike roots the kaiju briefly', () => {
   const { g, run, K, T0, place } = setup(1);
   place(T0, 24, 24); place(K, 1, 3);

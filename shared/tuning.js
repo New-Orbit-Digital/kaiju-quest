@@ -15,18 +15,38 @@
 export const TUNING = {
 
   // ───────────────────────────────────────────────────────────────
+  //  DAMAGE & RANGE  (every attack in the game, in one place)
+  //  Ranges are measured centre-to-centre in tiles. A street is 1 tile.
+  // ───────────────────────────────────────────────────────────────
+
+  // Kaiju SMASH (SPACE) — hits a building. Damage to buildings is permanent.
+  strikeDamage:       10,    // building HP removed per smash
+  strikeRange:        1,     // how far the kaiju can reach a building, tiles
+                             // (1 = the building right beside it, 1.5 = diagonals too,
+                             //  2 = one tile further away)
+  strikeCooldown:     0.5,   // seconds between smashes (lower = faster)
+  strikeRoot:         0.35,  // seconds the kaiju is stuck in place after a smash
+
+  // Kaiju STOMP — walking into a tank or soldier kills it instantly.
+  stompReach:         0.05,  // extra reach beyond touching, tiles (0.3 = stomps from further)
+
+  // Tank CANNON — fires on its own whenever the kaiju is in range.
+  tankDamage:         2,     // kaiju HP removed per shot
+  tankRange:          6,     // firing range, tiles
+  tankFireInterval:   1.2,   // one shot every N seconds (lower = faster)
+
+  // Soldier RIFLES — each soldier fires on its own when the kaiju is in range.
+  soldierDamage:      0.25,  // kaiju HP removed per shot (each soldier)
+  soldierRange:       4,     // firing range, tiles
+  soldierFireInterval: 1.0,  // one shot every N seconds, per soldier (lower = faster)
+
+  // ───────────────────────────────────────────────────────────────
   //  KAIJU
   // ───────────────────────────────────────────────────────────────
   kaijuSpeed:         3.0,   // walking speed, tiles/sec (with no tanks in the game)
   kaijuSpeedPerTank:  0.05,  // +5% speed for each tank player (0.10 = +10%)
   kaijuHpPerTank:     100,   // kaiju health = this × number of tanks (no regen)
   viewTilesKaiju:     15,    // ZOOM: tiles visible top-to-bottom (bigger = zoomed out)
-
-  // Smashing (SPACE) — each press is one strike on the building beside the kaiju.
-  // Building damage is permanent: walk away and come back, it's still hurt.
-  strikeDamage:       10,    // building HP removed per strike
-  strikeCooldown:     0.5,   // seconds between strikes (lower = faster smashing)
-  strikeRoot:         0.35,  // seconds the kaiju is stuck in place after a strike
 
   kaijuLength:        3.0,   // how big the T-Rex is drawn, nose to tail (visual only)
 
@@ -36,11 +56,6 @@ export const TUNING = {
   tankSpeed:          3.5,   // driving speed, tiles/sec
   viewTilesTank:      11,    // ZOOM on desktop: tiles visible top-to-bottom
   viewTilesMobile:    12,    // ZOOM on phones (portrait uses this across the width)
-
-  // Auto-fire — the turret locks on by itself whenever the kaiju is in range.
-  tankRange:          6,     // firing range, tiles
-  tankDamage:         2,     // kaiju HP removed per shot
-  tankFireInterval:   1.2,   // FIRE RATE: one shot every N seconds (lower = faster)
 
   // Boost (SPACE / phone BOOST button)
   boostMultiplier:    2.0,   // speed × this while boosting
@@ -58,9 +73,6 @@ export const TUNING = {
   //  SOLDIERS  (a squad follows each tank; they respawn with it)
   // ───────────────────────────────────────────────────────────────
   soldiersPerTank:    4,     // squad size
-  soldierRange:       4,     // firing range, tiles
-  soldierDamage:      0.25,  // kaiju HP removed per shot (each soldier)
-  soldierFireInterval: 1.0,  // FIRE RATE: one shot every N seconds per soldier
   soldierSpacing:     0.35,  // how far behind the tank each pair walks
   soldierSpread:      0.2,   // how far to the side of the tank's path they walk
   soldierHeight:      0.32,  // how big a soldier is drawn (visual only)
@@ -107,7 +119,6 @@ export const TUNING = {
   kaijuRadius:        0.4,   // kaiju hitbox half-width (a street is 1 tile, so < 0.5)
   tankRadius:         0.25,  // tank hitbox half-width
   soldierRadius:      0.12,  // soldier hitbox half-width
-  stompPad:           0.05,  // extra reach when the kaiju walks into tanks/soldiers
   laneAssist:         6.0,   // how fast units slide to the middle of the street (corners)
   buildingFootprint:  0.78,  // how much of its lot a building fills (also sets height)
   tickRate:           20,    // server updates per second

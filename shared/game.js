@@ -157,18 +157,24 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   // ── Combat pieces ──────────────────────────────────────────
+  // The building to hit: any building tile within strikeRange of the kaiju,
+  // preferring what it's facing, then the nearest.
   function strikeTarget(k) {
-    const tx = Math.round(k.x), tz = Math.round(k.z);
     const fx = Math.sin(k.rot), fz = Math.cos(k.rot);
-    const facing = Math.abs(fx) > Math.abs(fz) ? [Math.sign(fx), 0] : [0, Math.sign(fz)];
-    const dirs = [facing, [1, 0], [-1, 0], [0, 1], [0, -1]];
-    for (const [dx, dz] of dirs) {
-      const id = city.owner[tz + dz]?.[tx + dx];
+    const R = T.strikeRange, reach = Math.ceil(R) + 1;
+    const cx = Math.round(k.x), cz = Math.round(k.z);
+    let best = -1, bestScore = Infinity;
+    for (let tz = cz - reach; tz <= cz + reach; tz++) for (let tx = cx - reach; tx <= cx + reach; tx++) {
+      const id = city.owner[tz]?.[tx];
       if (id === undefined || id < 0) continue;
       if (city.buildings[id].kind === 'park' || state.buildingHp[id] <= 0) continue;
-      return id;
+      const dx = tx - k.x, dz = tz - k.z, d = Math.hypot(dx, dz);
+      if (d > R + 0.15) continue;                    // small slack for being off-centre
+      const facing = (dx * fx + dz * fz) / (d || 1);  // 1 = straight ahead
+      const score = d - facing * 0.6;
+      if (score < bestScore) { bestScore = score; best = id; }
     }
-    return -1;
+    return best;
   }
 
   function kaijuStrike(k, kid) {
@@ -305,9 +311,9 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     for (const p of tankList) {
       if (!p.alive) continue;
       const id = idOf(p);
-      if (dist(k, p) < T.kaijuRadius + T.tankRadius + T.stompPad) { killTank(p, id); continue; }
+      if (dist(k, p) < T.kaijuRadius + T.tankRadius + T.stompReach) { killTank(p, id); continue; }
       p.soldiers.forEach((s, i) => {
-        if (s.alive && dist(k, s) < T.kaijuRadius + T.soldierRadius + T.stompPad) {
+        if (s.alive && dist(k, s) < T.kaijuRadius + T.soldierRadius + T.stompReach) {
           s.alive = false; s.firing = false;
           state.kaijuScore += T.pointsSoldierKill;
           emit('soldierDown', { id, i, x: s.x, z: s.z, points: T.pointsSoldierKill });
