@@ -1,0 +1,13 @@
+# Render Blueprint: one free web service that builds the client and runs
+# the Colyseus server, which also serves the built client.
+services:
+  - type: web
+    name: kaiju-quest
+    runtime: node
+    plan: free
+    buildCommand: npm install --prefix client && npm run build --prefix client && npm install --prefix server --omit=dev
+    startCommand: node server/src/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

@@ -1,0 +1,22 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@colyseus/schema": "5.0.34",
+    "@colyseus/ws-transport": "0.18.4",
+    "colyseus": "0.18.8",
+    "express": "5.2.1"
+  },
+  "devDependencies": {
+    "@colyseus/sdk": "0.18.4"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  }
+}

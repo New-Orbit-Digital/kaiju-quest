@@ -1,0 +1,76 @@
+<title>Kaiju Quest Sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Barlow:wght@400;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  /* Single-look design: a night-slate game HUD over the city render. */
+  :root {
+    color-scheme: dark;
+    --ground: #1b2230;
+    --panel: rgba(13, 18, 27, 0.82);
+    --ink: #eef2f6;
+    --ink-dim: #a9b4c2;
+    --kaiju: #7dff8a;
+    --tank: #8fb0ff;
+    --hazard: #f5b82e;
+    --line: rgba(255, 255, 255, 0.12);
+  }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: var(--ground); color: var(--ink); font: 15px/1.5 Barlow, "Segoe UI", system-ui, sans-serif; }
+  #game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+
+  #hud { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: 16px; max-width: calc(100% - 32px);
+         background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
+         pointer-events: none; min-width: 230px; }
+  #hud b { font: 400 18px/1.1 Bungee, Impact, sans-serif; letter-spacing: 0.04em; display: block; margin-bottom: 4px; }
+  #hud .role-kaiju { color: var(--kaiju); font-weight: 600; }
+  #hud .role-tank { color: var(--tank); font-weight: 600; }
+  #hud .dim { color: var(--ink-dim); font-size: 13px; }
+  #status { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
+            background: var(--panel); padding: 6px 12px; border-radius: 6px; font-size: 13px; }
+
+  #start { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
+           background: linear-gradient(rgba(12, 16, 24, 0.35), rgba(12, 16, 24, 0.6)); cursor: pointer; }
+  #start .card { background: var(--panel); border: 1px solid var(--line); border-top: 4px solid var(--hazard);
+                 border-radius: 6px; padding: 20px 24px; max-width: 420px; width: 100%; }
+  #start h1 { font: 400 clamp(26px, 6vw, 38px)/1 Bungee, Impact, sans-serif; margin: 0 0 6px; text-wrap: balance; }
+  #start p { margin: 0 0 12px; color: var(--ink-dim); }
+  #start dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 16px; }
+  #start dt { font: 500 13px/1.6 "JetBrains Mono", ui-monospace, monospace; color: var(--hazard); }
+  #start dd { margin: 0; }
+  #start button { font: 400 16px/1 Bungee, Impact, sans-serif; letter-spacing: 0.05em; color: #141a24;
+                  background: var(--hazard); border: 0; border-radius: 4px; padding: 12px 18px; cursor: pointer; }
+  #start button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  #start .note { font-size: 12px; margin: 12px 0 0; }
+  [hidden] { display: none !important; }
+</style>
+
+<canvas id="game"></canvas>
+<div id="hud"><b>KAIJU QUEST</b><div id="hud-body">Loading city…</div></div>
+<div id="status" hidden></div>
+<div id="start" role="dialog" aria-labelledby="start-title">
+  <div class="card">
+    <h1 id="start-title">Kaiju Quest</h1>
+    <p>Sandbox for Packet 01. Drive the kaiju and the tanks around the city to judge the camera, controls and scale. There's no combat yet.</p>
+    <dl>
+      <dt>WASD</dt><dd>Move</dd>
+      <dt>Tab</dt><dd>Swap between the kaiju and the 3 tanks</dd>
+      <dt>C</dt><dd>Camera: 50° steep ↔ 35° true isometric</dd>
+      <dt>V</dt><dd>Controls: street grid ↔ screen direction</dd>
+    </dl>
+    <button id="play" type="button">Play</button>
+    <p class="note">Needs a keyboard. Click the city any time to give it focus again.</p>
+  </div>
+</div>
+
+<script>
+  // Start card: click to focus the game (keyboard input needs focus).
+  (function () {
+    var start = document.getElementById('start');
+    function go() { start.hidden = true; document.getElementById('game').focus(); window.focus(); }
+    document.getElementById('play').addEventListener('click', function (e) { e.stopPropagation(); go(); });
+    start.addEventListener('click', go);
+    document.getElementById('game').setAttribute('tabindex', '0');
+  })();
+</script>
+<script>/*__SANDBOX_JS__*/</script>
