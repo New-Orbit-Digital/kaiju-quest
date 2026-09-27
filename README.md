@@ -8,7 +8,7 @@ Live playtest: https://kaiju-quest.onrender.com. Open it on a phone to drive a t
 
 ## Playtest (Render)
 
-`render.yaml` is a Render Blueprint for one free web service. It builds the client and runs the game server, which also serves the page, so everyone opens the same URL. The first player in becomes the kaiju and later players get tanks. Adding `?role=kaiju` or `?role=tank` asks for a role. The free tier sleeps when idle, so the first visit can take about a minute.
+`render.yaml` is a Render Blueprint for one free web service. It builds the client and runs the game server, which also serves the page, so everyone opens the same URL. Desktop players pick **KAIJU** or **TANK** when the page opens (`?role=kaiju` / `?role=tank` skips the picker). If the kaiju seat is taken you get a tank and a note explaining why; the seat frees up when the kaiju leaves or sits idle (`kaijuIdleTakeover`, 30s). Phones are always tanks (`?desktop` forces desktop mode on a touch device). The free tier sleeps when idle, so the first visit can take about a minute.
 
 ## Run it locally
 

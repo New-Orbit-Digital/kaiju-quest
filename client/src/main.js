@@ -11,9 +11,12 @@ import { createTouchControls } from './touch.js';
 
 const params = new URLSearchParams(location.search);
 const OFFLINE = !!globalThis.__KQ_OFFLINE || params.has('offline');
-// Phones (coarse pointer, no hover) join as tanks with touch controls.
-const MOBILE = params.has('mobile') ||
-  (matchMedia('(pointer: coarse)').matches && !matchMedia('(hover: hover)').matches);
+// Phones join as tanks with touch controls. A touch device counts as a phone
+// only if its main pointer is a finger AND the screen is phone/tablet-sized, so
+// touchscreen laptops and desktops stay desktop. ?mobile / ?desktop override.
+const MOBILE = !params.has('desktop') && (params.has('mobile') ||
+  (matchMedia('(pointer: coarse)').matches && !matchMedia('(hover: hover)').matches &&
+   navigator.maxTouchPoints > 0 && Math.min(screen.width, screen.height) <= 900));
 // Dev (vite on :5173) talks to the game server on :2567; a deployed build
 // is served by the game server itself, so it connects to its own host.
 const WS = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -71,7 +74,7 @@ const touch = MOBILE ? createTouchControls({ onBoost: () => room?.send('action')
 // ── Boot ───────────────────────────────────────────────────
 const units = new Map();    // sessionId → { view, display: {x,z,rot}, alive }
 const squads = new Map();   // `${id}:${i}` → { view, display }
-let room = null, city = null;
+let room = null, city = null, wantedRole = null, roleNoticeDone = false;
 let buildingObjects = new Map(), damage = null;
 
 async function boot() {
@@ -83,10 +86,12 @@ async function boot() {
   if (OFFLINE) {
     room = createLocalRoom();
   } else {
+    // Desktop players choose a side first (?role=kaiju / ?role=tank skips this). Phones are tanks.
+    const wanted = MOBILE ? 'tank' : (params.get('role') || await hud.pickRole());
+    wantedRole = wanted;
     setStatus('connecting…');
     try {
-      const wanted = params.get('role'); // ?role=kaiju | ?role=tank (lobby comes in P03)
-      room = await new Client(SERVER).joinOrCreate('match', { role: wanted || undefined, mobile: MOBILE });
+      room = await new Client(SERVER).joinOrCreate('match', { role: wanted, mobile: MOBILE });
     } catch (e) {
       console.error(e);
       setStatus(/full|locked/i.test(String(e?.message)) ? 'This match is full — try again after a round ends'
@@ -131,6 +136,9 @@ function onFx(e) {
     case 'soldierDown': fx.blast(e.x, e.z, 0.35, 0xc0392b); break;
     case 'end': if (e.winner === 'tanks') k?.view.die(); break;
     case 'start': k?.view.revive(); break;
+    case 'kaijuReplaced':
+      if (e.id === room.sessionId) hud.toast('You were idle, so another player took over the kaiju. You\'re a tank now.', 8);
+      break;
   }
 }
 
@@ -152,6 +160,7 @@ function syncUnits(dt) {
   room.state.players.forEach((p, id) => {
     seen.add(id);
     let u = units.get(id);
+    if (u && u.role !== p.role) { scene.remove(u.view.object); units.delete(id); u = null; } // role changed
     if (!u) {
       const view = createUnit(p.role, p.slot, id === room.sessionId);
       scene.add(view.object);
@@ -263,6 +272,12 @@ function frame(ts) {
   fadeOccluders(buildingObjects, camera,
     [...units.values()].filter(u => u.role === 'kaiju' || u.alive).map(u => u.display), dt);
 
+  if (me && !roleNoticeDone && !OFFLINE) {
+    roleNoticeDone = true;
+    if (!MOBILE && wantedRole === 'kaiju' && me.role === 'tank') {
+      hud.toast(`Someone is already the kaiju, so you're a tank. The seat frees up if they leave or sit idle for ${TUNING.kaijuIdleTakeover}s — reload and pick KAIJU again then.`, 9);
+    }
+  }
   if (me) {
     updateSideHud(me);
     hud.update({ state: room.state, me, myId: room.sessionId, camera, units });

@@ -39,6 +39,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   const actions = new Set();       // ids that pressed E since last tick
   const trails = new Map();        // tank id → recent path points, newest first
   const timers = new Map();        // id → { fire, root, soldierFire[] } (server-only, not synced)
+  const lastActive = new Map();    // id → game time of last key press / stick move
+  let now = 0;
   const streets = [];
   for (let z = 0; z < city.depth; z++) for (let x = 0; x < city.width; x++)
     if (city.tiles[z][x] === '#') streets.push({ x, z });
@@ -96,9 +98,29 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   // ── Joining / leaving ──────────────────────────────────────
+  function freeSlot() {
+    const used = new Set(tanks().map(t => t.slot));
+    let slot = 0; while (used.has(slot)) slot++;
+    return slot;
+  }
+  // An idle kaiju (no input for kaijuIdleTakeover seconds) steps down to a tank
+  // when a desktop player asks for the kaiju seat.
+  function takeOverIdleKaiju() {
+    const k = kaiju();
+    if (!k) return true;
+    const kid = idOf(k);
+    if (now - (lastActive.get(kid) ?? -Infinity) < T.kaijuIdleTakeover) return false;
+    k.role = 'tank'; k.slot = freeSlot();
+    placeTank(k, kid, state.phase === 'playing' ? pickRespawn() : SPAWNS.tanks[k.slot % SPAWNS.tanks.length]);
+    emit('kaijuReplaced', { id: kid });
+    return true;
+  }
+
   function join(id, opts = {}) {
     const wantsKaiju = opts.role === 'kaiju', wantsTank = opts.role === 'tank';
     const mobile = !!opts.mobile;
+    if (wantsKaiju && !mobile && kaiju()) takeOverIdleKaiju();
+    lastActive.set(id, now);
     let role;
     if (mobile) role = 'tank';                               // phones always drive tanks
     else if (!kaiju() && !wantsTank) role = 'kaiju';
@@ -112,8 +134,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       p.slot = -1;
       placeKaiju(p);
     } else {
-      const used = new Set(tanks().map(t => t.slot));
-      let slot = 0; while (used.has(slot)) slot++;
+      const slot = freeSlot();
       if (slot >= T.maxTanks) throw new Error('No tank seats left');
       p.slot = slot;
       state.players.set(id, p);
@@ -126,16 +147,18 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   function leave(id) {
     state.players.delete(id);
-    inputs.delete(id); trails.delete(id); timers.delete(id); actions.delete(id);
+    inputs.delete(id); trails.delete(id); timers.delete(id); actions.delete(id); lastActive.delete(id);
     rescale();
   }
 
   const input = (id, v) => {
     const x = Number(v?.x), z = Number(v?.z);
-    inputs.set(id, { x: Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0,
-                     z: Number.isFinite(z) ? Math.max(-1, Math.min(1, z)) : 0 });
+    const v2 = { x: Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0,
+                 z: Number.isFinite(z) ? Math.max(-1, Math.min(1, z)) : 0 };
+    if (v2.x || v2.z) lastActive.set(id, now);
+    inputs.set(id, v2);
   };
-  const action = (id) => actions.add(id);
+  const action = (id) => { actions.add(id); lastActive.set(id, now); };
 
   // ── Round flow ─────────────────────────────────────────────
   function resetRound() {
@@ -256,6 +279,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   // ── Tick ───────────────────────────────────────────────────
   function tick(dt) {
+    now += dt;
     const k = kaiju();
     const tankList = tanks();
 

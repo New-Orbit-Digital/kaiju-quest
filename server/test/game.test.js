@@ -80,6 +80,18 @@ test('strikeRange: 1 reaches only the building beside the kaiju; 2 reaches furth
   T.strikeRange = 1;
 });
 
+test('picking KAIJU takes the seat from an idle kaiju, not an active one', () => {
+  const { g, state, run } = setup(1);
+  g.input('K', { x: 1, z: 0 });            // active kaiju
+  assert.equal(g.join('D', { role: 'kaiju' }), 'tank', 'active kaiju keeps the seat');
+  g.leave('D');
+  g.input('K', { x: 0, z: 0 });
+  run(T.kaijuIdleTakeover + 0.5);          // kaiju goes idle
+  assert.equal(g.join('D', { role: 'kaiju' }), 'kaiju');
+  assert.equal(state.players.get('K').role, 'tank', 'idle kaiju became a tank');
+  assert.equal(g.join('P', { role: 'kaiju', mobile: true }), 'tank', 'phones never take the kaiju');
+});
+
 test('strike roots the kaiju briefly', () => {
   const { g, run, K, T0, place } = setup(1);
   place(T0, 24, 24); place(K, 1, 3);

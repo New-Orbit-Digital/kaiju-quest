@@ -92,6 +92,8 @@ export const TUNING = {
   countdownSeconds:   3,     // "3-2-1" before a round
   endScreenSeconds:   12,    // results screen, then the next round starts
   maxTanks:           3,     // tank seats per game
+  kaijuIdleTakeover:  30,    // a desktop player who picks KAIJU takes over the seat if
+                             // the current kaiju hasn't pressed anything for this long
 
   // ───────────────────────────────────────────────────────────────
   //  PHONES  (phones always play a tank)

@@ -37,6 +37,19 @@ const CSS = `
 .kq-marker { position: fixed; width: 0; height: 0; pointer-events: none; z-index: 4; }
 .kq-marker::before { content: ''; position: absolute; left: -9px; top: -16px; border-top: 14px solid var(--c);
   border-left: 9px solid transparent; border-right: 9px solid transparent; filter: drop-shadow(0 0 3px rgba(0,0,0,.9)); }
+#kq-pick { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8,10,16,.6); z-index: 9; padding: 16px; }
+#kq-pick .card { background: rgba(14,19,28,.95); border-radius: 8px; padding: 22px 26px; color: #eef2f6; text-align: center;
+  border-top: 4px solid #f5b82e; font: 500 15px/1.5 system-ui, sans-serif; max-width: 460px; }
+#kq-pick h2 { margin: 0 0 4px; font: 900 30px/1.1 system-ui, sans-serif; }
+#kq-pick .row { display: flex; gap: 12px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+#kq-pick button { font: 800 17px/1 system-ui, sans-serif; letter-spacing: .05em; border: 0; border-radius: 6px;
+  padding: 14px 22px; cursor: pointer; min-width: 150px; }
+#kq-pick button small { display: block; font: 500 12px/1.3 system-ui, sans-serif; letter-spacing: 0; margin-top: 4px; }
+#kq-pick .k { background: #7dff8a; color: #10301a; } #kq-pick .t { background: #8fb0ff; color: #101a33; }
+#kq-pick button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+#kq-toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  background: rgba(14,19,28,.94); color: #eef2f6; padding: 10px 16px; border-radius: 8px; border-left: 4px solid #f5b82e;
+  font: 600 14px/1.4 system-ui, sans-serif; z-index: 8; max-width: calc(100% - 32px); pointer-events: none; }
 .kq-mobile #kq-top { gap: 8px; padding: 6px 10px; font-size: 12px; }
 .kq-mobile #kq-top .hp { width: 120px; }
 .kq-mobile #kq-top .clock { font-size: 15px; }
@@ -71,7 +84,28 @@ export function createHud({ mobile }) {
     return { sx: (v.x + 1) / 2 * innerWidth, sy: (1 - v.y) / 2 * innerHeight, on: Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 };
   }
 
+  const toastEl = el(`<div id="kq-toast" hidden></div>`);
+  let toastTimer = null;
+
   return {
+    // Desktop role picker shown before joining. Resolves 'kaiju' or 'tank'.
+    pickRole() {
+      return new Promise((resolve) => {
+        const pick = el(`<div id="kq-pick"><div class="card"><h2>KAIJU QUEST</h2>
+          <div>Choose your side. One kaiju, up to three tanks.</div>
+          <div class="row">
+            <button class="k" type="button" data-r="kaiju">KAIJU<small>WASD · Space smash · stomp tanks</small></button>
+            <button class="t" type="button" data-r="tank">TANK<small>WASD · Space boost · auto-fire</small></button>
+          </div></div></div>`);
+        pick.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { pick.remove(); resolve(b.dataset.r); }));
+        pick.querySelector('.k').focus();
+      });
+    },
+    toast(text, seconds = 7) {
+      toastEl.textContent = text; toastEl.hidden = false;
+      (window.__kqToasts ||= []).push(text); // record for automated checks
+      clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, seconds * 1000);
+    },
     update({ state, me, myId, camera, units }) {
       if (!state || !me) return;
       const playing = state.phase === 'playing';

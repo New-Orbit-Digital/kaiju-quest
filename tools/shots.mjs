@@ -59,7 +59,7 @@ try {
   check(await phone.locator('#kq-stick').isVisible() && await phone.locator('#kq-boost').isVisible(), 'phone shows joystick + boost button');
   check(!(await kaiju.locator('#kq-stick').count()), 'desktop has no touch controls');
 
-  await sleep(3500);  // countdown
+  await until(() => me(kaiju).then(m => m.phase === 'playing'), 20000);  // countdown
   k = await me(kaiju);
   check(k.phase === 'playing' && k.hp === 100 && k.max === 100, `round live: phase=${k.phase}, kaiju HP ${k.hp}/${k.max}`);
 
@@ -118,6 +118,28 @@ try {
 
   const [fk, fp] = [await fps(kaiju), await fps(phone)];
   console.log(`INFO  fps in headless software GL (not a real device): desktop ${fk}, phone ${fp}`);
+
+  // A second desktop player picks KAIJU while the seat is taken → tank + explanation
+  const nudge = setInterval(() => kaiju.keyboard.press('Space').catch(() => {}), 5000); // kaiju stays active
+  const thirdBrowser = await launch();
+  const third = await thirdBrowser.newPage({ viewport: { width: 900, height: 560 } });
+  third.on('pageerror', e => errors.push(`third: ${e.message}`));
+  await third.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await third.waitForSelector('#kq-pick button.k', { timeout: 90000 });
+  check(true, 'desktop without ?role shows the KAIJU / TANK picker');
+  await third.click('#kq-pick button.k');
+  await third.waitForFunction(() => window.__kq?.room?.state?.players?.size >= 2, null, { timeout: 60000 });
+  await sleep(1500);
+  const r3 = await me(third);
+  const toastText = () => third.evaluate(() => (window.__kqToasts || []).join(' | '));
+  await until(async () => !!(await toastText()), 12000);
+  const toast = await toastText();
+  check(r3.role === 'tank' && /already the kaiju/.test(toast), `picking a taken KAIJU seat → ${r3.role}, told why: ${toast ? 'yes' : 'no'}`);
+  clearInterval(nudge);
+  await third.evaluate(() => window.__kq.room.leave());
+  await thirdBrowser.close(); browsers.splice(browsers.indexOf(thirdBrowser), 1);
+  k = await me(kaiju);
+  check(k.role === 'kaiju', `original kaiju kept the seat (${k.role})`);
 
   // Let the timer run out → kaiju wins, end screen shows
   await kaiju.waitForFunction(() => window.__kq.room.state.phase === 'ended', null, { timeout: (ROUND + 10) * 1000 });
