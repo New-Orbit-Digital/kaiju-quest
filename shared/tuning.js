@@ -136,7 +136,7 @@ export const TUNING = {
   cameraFollow:       8.0,   // how tightly the camera follows you (higher = snappier)
   gamepadSnap:        true,  // controller stick snaps to the 4 street directions
   gamepadDeadzone:    0.3,   // share of the controller stick that does nothing (0–1)
-  keyComboSnap:       true,  // two keys together follow the screen diagonal: S+A = S's street,
+  keyComboSnap:       false,  // two keys together follow the screen diagonal: S+A = S's street,
                              // S+D = D's, W+A = A's, W+D = W's (false = old sum, cuts corners)
   controlScheme:      'street', // 'street': WASD follows the streets (W = up-right)
                                 // 'screen': W = straight up the screen
