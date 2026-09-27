@@ -155,6 +155,7 @@ export const TUNING = {
   kaijuRadius:        0.4,   // kaiju hitbox half-width (a street is 1 tile, so < 0.5)
   tankRadius:         0.25,  // tank hitbox half-width
   civilianRadius:     0.12,  // civilian hitbox half-width
+  parkSpeed:          0.65,  // parks (trees) can be crossed by everyone at this × speed
   laneAssist:         6.0,   // how fast units slide to the middle of the street (corners)
   streetWiden:        0.1,   // extra road on each side of a street, in tiles
                              // (0.1 = streets 20% wider; above ~0.12 units clip building edges)

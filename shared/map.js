@@ -6,7 +6,7 @@
 //    #  street            h  suburban house
 //    c  commercial        i  industrial
 //    T  tower (2×2 lot: T is the top-left, t fills the other 3)
-//    t  tower fill        g  park (blocked for everyone, has trees)
+//    t  tower fill        g  park (trees: anyone can cross it, slowly)
 //
 //  North is the top row. x grows to the right, z grows downward.
 //

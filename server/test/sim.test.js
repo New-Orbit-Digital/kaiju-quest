@@ -108,3 +108,15 @@ test('no early turn into a wall with no opening nearby', () => {
   stepUnit(city, u, { x: 0, z: -1 }, 0.05, 2, TUNING.tankRadius);
   assert.ok(Math.abs(u.x - 2) < 1e-9, `drove on without an opening in reach, x=${u.x}`);
 });
+
+test('parks: tanks and the kaiju can cross the trees, at parkSpeed', () => {
+  // downtown plaza: park tiles x13-17 on row 14; column 12 is a street
+  assert.equal(tileWalkable(city, 'tank', 14, 14), true);
+  assert.equal(tileWalkable(city, 'kaiju', 14, 14), true);
+  const street = run({ role: 'tank', x: 12, z: 3, rot: 0 }, { x: 1, z: 0 }, 0.5, 2, TUNING.tankRadius);
+  const park = run({ role: 'tank', x: 14, z: 14, rot: 0 }, { x: 1, z: 0 }, 0.5, 2, TUNING.tankRadius);
+  const ratio = (park.x - 14) / (street.x - 12);
+  assert.ok(Math.abs(ratio - TUNING.parkSpeed) < 0.02, `park speed ratio ${ratio.toFixed(3)}`);
+  const k = run({ role: 'kaiju', x: 12, z: 14, rot: 0 }, { x: 1, z: 0 }, 4, 3, TUNING.kaijuRadius);
+  assert.ok(k.x > 17, `kaiju crossed the plaza: x=${k.x.toFixed(2)}`);
+});

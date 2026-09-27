@@ -11,8 +11,14 @@ export function tileWalkable(city, role, tx, tz, destroyed = () => false, blocke
   const id = city.owner[tz][tx];
   if (id < 0) return false;
   const b = city.buildings[id];
-  if (b.kind === 'park') return false;
+  if (b.kind === 'park') return true;          // parks: anyone can push through the trees (slowly)
   return role === 'kaiju' && destroyed(id);
+}
+
+// Speed factor for the ground under (x, z): parks (trees) slow everyone down.
+export function terrainSpeed(city, x, z) {
+  const id = city.owner[Math.round(z)]?.[Math.round(x)];
+  return id !== undefined && id >= 0 && city.buildings[id].kind === 'park' ? TUNING.parkSpeed : 1;
 }
 
 // Collision shape of a blocked tile: the tile square, pulled back by
@@ -55,7 +61,7 @@ export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked) {
   if (len < 0.01) return false;
   if (len > 1) { ix /= len; iz /= len; }
 
-  const step = speed * dt;
+  const step = speed * terrainSpeed(city, unit.x, unit.z) * dt;
   const role = unit.role;
   const startX = unit.x, startZ = unit.z;
   const clear = (x, z) => spotClear(city, role, x, z, r, destroyed, blocked);
