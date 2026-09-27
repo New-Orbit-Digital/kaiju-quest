@@ -10,8 +10,9 @@ test('two clients over the network: roles, sync, countdown, combat events', asyn
   const port = 25670 + Math.floor(Math.random() * 100);
   const server = await startServer(port);
   try {
-    const a = await new Client(`ws://127.0.0.1:${port}`).joinOrCreate('match');
-    const b = await new Client(`ws://127.0.0.1:${port}`).joinOrCreate('match', { mobile: true });
+    const a = await new Client(`ws://127.0.0.1:${port}`).joinOrCreate('match', { name: 'Kay' });
+    const b = await new Client(`ws://127.0.0.1:${port}`).joinOrCreate('match', { mobile: true, name: 'Phone' });
+    const c = await new Client(`ws://127.0.0.1:${port}`).joinOrCreate('match', { name: 'Ghost' });
     const fx = [];
     a.onMessage('fx', (m) => fx.push(m));
     await wait(200);
@@ -19,10 +20,22 @@ test('two clients over the network: roles, sync, countdown, combat events', asyn
     assert.equal(b.state.players.get(b.sessionId).role, 'tank');
     assert.equal(b.state.players.get(b.sessionId).mobile, true);
     assert.equal(b.state.players.get(b.sessionId).soldiers.length, T.soldiersPerTank);
-    assert.ok(Math.abs(a.state.kaijuSpeed - kaijuSpeedFor(1)) < 1e-6);
+    assert.ok(Math.abs(a.state.kaijuSpeed - kaijuSpeedFor(2)) < 1e-6);
     assert.equal(a.state.buildingHp.length > 100, true);
+    assert.equal(b.state.players.get(a.sessionId).name, 'Kay');
+    assert.equal(b.state.phase, 'lobby');
 
-    await wait(T.countdownSeconds * 1000 + 300);
+    // kick the ghost from the lobby, then the two real players ready up
+    let cLeft = false; c.onLeave(() => { cLeft = true; });
+    a.send('kick', { id: c.sessionId });
+    await wait(300);
+    assert.equal(cLeft, true, 'kicked player is disconnected');
+    assert.equal(a.state.players.size, 2);
+    a.send('ready', { ready: true });
+    await wait(200);
+    assert.equal(a.state.phase, 'lobby', 'waits for the tank to ready');
+    b.send('ready', { ready: true });
+    await wait(T.countdownSeconds * 1000 + 400);
     assert.equal(b.state.phase, 'playing');
     assert.equal(b.state.kaijuHp, T.kaijuHpPerTank);
 

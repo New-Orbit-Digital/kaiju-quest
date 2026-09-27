@@ -6,6 +6,9 @@ export const Soldier = schema({
 }, 'Soldier');
 
 export const Player = schema({
+  name: t.string(),
+  ready: t.boolean(),   // lobby ready-up
+  afk: t.boolean(),     // no input for TUNING.afkSeconds
   role: t.string(),     // 'kaiju' | 'tank'
   slot: t.number(),     // tank colour slot 0..n (kaiju = -1)
   mobile: t.boolean(),
@@ -20,7 +23,7 @@ export const Player = schema({
 }, 'Player');
 
 export const MatchState = schema({
-  phase: t.string(),    // waiting | countdown | playing | ended
+  phase: t.string(),    // lobby | countdown | playing | ended
   clock: t.number(),    // seconds left in the current phase
   winner: t.string(),
   kaijuHp: t.number(),

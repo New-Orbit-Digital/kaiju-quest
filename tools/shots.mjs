@@ -48,9 +48,9 @@ const fps = (p) => p.evaluate(() => new Promise(res => { let n = 0; const t0 = p
 let ok = true;
 const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if (!cond) ok = false; };
 try {
-  const kaiju = await open('kaiju', { viewport: { width: 1100, height: 620 } }, '?role=kaiju');
+  const kaiju = await open('kaiju', { viewport: { width: 1100, height: 620 } }, '?role=kaiju&name=Rex');
   // Pixel 7 in landscape, DPR 1 to keep software rendering bearable
-  const phone = await open('phone', { ...devices['Pixel 7 landscape'], deviceScaleFactor: 1 }, '');
+  const phone = await open('phone', { ...devices['Pixel 7 landscape'], deviceScaleFactor: 1 }, '?name=Pat');
   await kaiju.evaluate(() => { window.__fx = []; window.__kq.room.onMessage('fx', (e) => window.__fx.push(e.type)); });
   await sleep(1000);
   let k = await me(kaiju), t = await me(phone);
@@ -59,7 +59,36 @@ try {
   check(await phone.locator('#kq-stick').isVisible() && await phone.locator('#kq-boost').isVisible(), 'phone shows joystick + boost button');
   check(!(await kaiju.locator('#kq-stick').count()), 'desktop has no touch controls');
 
-  await until(() => me(kaiju).then(m => m.phase === 'playing'), 20000);  // countdown
+  // ── Lobby ──
+  k = await me(kaiju);
+  check(k.phase === 'lobby', `joined into the lobby (${k.phase})`);
+  // a third desktop player (a "ghost" tab) joins by typing a name
+  const ghostBrowser = await launch();
+  const ghost = await ghostBrowser.newPage({ viewport: { width: 900, height: 560 } });
+  await ghost.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await ghost.waitForSelector('#kq-name', { timeout: 90000 });
+  await ghost.fill('#kq-name', 'Ghost'); await ghost.click('#kq-pick button[type=submit]');
+  await until(() => kaiju.evaluate(() => window.__kq.room.state.players.size === 3), 60000);
+  await until(() => kaiju.evaluate(() => [...document.querySelectorAll('#kq-lobby .nm')].map(n => n.textContent).join('|').includes('Ghost')), 15000);
+  const names = await kaiju.evaluate(() => [...document.querySelectorAll('#kq-lobby .nm')].map(n => n.textContent));
+  check(names.some(n => n.startsWith('Rex')) && names.some(n => n.startsWith('Pat')) && names.some(n => n.startsWith('Ghost')),
+    `lobby lists every player by name: ${names.join(', ')}`);
+  await kaiju.screenshot({ path: 'docs/shots/p03-lobby.png' });
+  // Rex readies; the round must not start while Pat hasn't (Ghost is active too)
+  await kaiju.click('#kq-lobby [data-act=ready]');
+  await sleep(1500);
+  check((await me(kaiju)).phase === 'lobby', 'no start while others are not ready');
+  // kick the ghost
+  const kickTarget = await kaiju.evaluate(() => { const r = window.__kq.room; let gid = ''; r.state.players.forEach((p, id) => { if (p.name === 'Ghost') gid = id; }); return gid; });
+  if (kickTarget) await kaiju.click(`#kq-lobby [data-kick="${kickTarget}"]`);
+  await until(() => kaiju.evaluate(() => window.__kq.room.state.players.size === 2), 15000);
+  check((await me(kaiju)).n === 2, 'kicking the ghost removed it from the game');
+  await ghostBrowser.close(); browsers.splice(browsers.indexOf(ghostBrowser), 1);
+  const tagCount = await kaiju.evaluate(() => [...document.querySelectorAll('.kq-tag')].filter(t => !t.hidden).map(t => t.textContent));
+  check(tagCount.some(t => t.startsWith('Rex')), `name tags over units: ${tagCount.join(', ')}`);
+  // Pat readies from the phone → countdown → round
+  await phone.locator('#kq-lobby [data-act=ready]').dispatchEvent('click');
+  await until(() => me(kaiju).then(m => m.phase === 'playing'), 30000);  // countdown
   k = await me(kaiju);
   check(k.phase === 'playing' && k.hp === 100 && k.max === 100, `round live: phase=${k.phase}, kaiju HP ${k.hp}/${k.max}`);
 
@@ -110,7 +139,6 @@ try {
   const fxAll = await kaiju.evaluate(() => window.__fx);
   check(stomped && k.score >= 50 && (!t.alive || fxAll.includes('respawn')), `kaiju stomped the tank: score ${k.score} (tankDown events: ${fxAll.filter(x => x === 'tankDown').length})`);
   await sleep(300);
-  await phone.screenshot({ path: 'docs/shots/p02-phone-crushed.png' });
   await until(() => me(phone).then(m => m.alive), 12000);
   t = await me(phone); k = await me(kaiju);
   const d = Math.hypot(t.x - k.x, t.z - k.z);
@@ -118,28 +146,6 @@ try {
 
   const [fk, fp] = [await fps(kaiju), await fps(phone)];
   console.log(`INFO  fps in headless software GL (not a real device): desktop ${fk}, phone ${fp}`);
-
-  // A second desktop player picks KAIJU while the seat is taken → tank + explanation
-  const nudge = setInterval(() => kaiju.keyboard.press('Space').catch(() => {}), 5000); // kaiju stays active
-  const thirdBrowser = await launch();
-  const third = await thirdBrowser.newPage({ viewport: { width: 900, height: 560 } });
-  third.on('pageerror', e => errors.push(`third: ${e.message}`));
-  await third.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await third.waitForSelector('#kq-pick button.k', { timeout: 90000 });
-  check(true, 'desktop without ?role shows the KAIJU / TANK picker');
-  await third.click('#kq-pick button.k');
-  await third.waitForFunction(() => window.__kq?.room?.state?.players?.size >= 2, null, { timeout: 60000 });
-  await sleep(1500);
-  const r3 = await me(third);
-  const toastText = () => third.evaluate(() => (window.__kqToasts || []).join(' | '));
-  await until(async () => !!(await toastText()), 12000);
-  const toast = await toastText();
-  check(r3.role === 'tank' && /already the kaiju/.test(toast), `picking a taken KAIJU seat → ${r3.role}, told why: ${toast ? 'yes' : 'no'}`);
-  clearInterval(nudge);
-  await third.evaluate(() => window.__kq.room.leave());
-  await thirdBrowser.close(); browsers.splice(browsers.indexOf(thirdBrowser), 1);
-  k = await me(kaiju);
-  check(k.role === 'kaiju', `original kaiju kept the seat (${k.role})`);
 
   // Let the timer run out → kaiju wins, end screen shows
   await kaiju.waitForFunction(() => window.__kq.room.state.phase === 'ended', null, { timeout: (ROUND + 10) * 1000 });

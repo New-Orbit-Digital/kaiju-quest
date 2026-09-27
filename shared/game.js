@@ -15,12 +15,17 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
 // Plain-object factories (tests + offline sandbox). The server passes schema ones.
 export const plainMake = {
-  player: () => ({ role: '', slot: -1, mobile: false, x: 0, z: 0, rot: 0, moving: false,
+  player: () => ({ name: '', ready: false, afk: false, role: '', slot: -1, mobile: false, x: 0, z: 0, rot: 0, moving: false,
     alive: true, respawnIn: 0, boostIn: 0, boosting: false, strikeIn: 0, soldiers: [] }),
   soldier: () => ({ x: 0, z: 0, rot: 0, alive: true, firing: false }),
-  state: () => ({ phase: 'waiting', clock: 0, winner: '', kaijuHp: 0, kaijuMaxHp: 0,
+  state: () => ({ phase: 'lobby', clock: 0, winner: '', kaijuHp: 0, kaijuMaxHp: 0,
     kaijuScore: 0, kaijuSpeed: 0, players: new Map(), buildingHp: [] }),
 };
+
+// Player names: printable, trimmed, max 16 characters.
+export function cleanName(n) {
+  return String(n ?? '').replace(/[^\p{L}\p{N} _.'-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+}
 
 // Is a ground point inside what the kaiju's camera shows? (tiles; assumes a
 // 16:9 screen plus a margin so respawns never pop in at the edge)
@@ -103,14 +108,16 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     let slot = 0; while (used.has(slot)) slot++;
     return slot;
   }
-  // An idle kaiju (no input for kaijuIdleTakeover seconds) steps down to a tank
-  // when a desktop player asks for the kaiju seat.
+  const isAfk = (id) => now - (lastActive.get(id) ?? -Infinity) >= T.afkSeconds;
+  const touch = (id) => { lastActive.set(id, now); const p = state.players.get(id); if (p && p.afk) p.afk = false; };
+
+  // An AFK kaiju steps down to a tank when someone else wants the seat.
   function takeOverIdleKaiju() {
     const k = kaiju();
     if (!k) return true;
     const kid = idOf(k);
-    if (now - (lastActive.get(kid) ?? -Infinity) < T.kaijuIdleTakeover) return false;
-    k.role = 'tank'; k.slot = freeSlot();
+    if (!isAfk(kid)) return false;
+    k.role = 'tank'; k.slot = freeSlot(); k.ready = false;
     placeTank(k, kid, state.phase === 'playing' ? pickRespawn() : SPAWNS.tanks[k.slot % SPAWNS.tanks.length]);
     emit('kaijuReplaced', { id: kid });
     return true;
@@ -121,6 +128,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const mobile = !!opts.mobile;
     if (wantsKaiju && !mobile && kaiju()) takeOverIdleKaiju();
     lastActive.set(id, now);
+    const name = cleanName(opts.name) || `Player ${state.players.size + 1}`;
     let role;
     if (mobile) role = 'tank';                               // phones always drive tanks
     else if (!kaiju() && !wantsTank) role = 'kaiju';
@@ -128,6 +136,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     else role = 'tank';
 
     const p = make.player();
+    p.name = name; p.ready = false; p.afk = false;
     p.role = role; p.mobile = mobile;
     p.alive = true; p.respawnIn = 0; p.boostIn = 0; p.boosting = false; p.strikeIn = 0;
     if (role === 'kaiju') {
@@ -155,10 +164,56 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const x = Number(v?.x), z = Number(v?.z);
     const v2 = { x: Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0,
                  z: Number.isFinite(z) ? Math.max(-1, Math.min(1, z)) : 0 };
-    if (v2.x || v2.z) lastActive.set(id, now);
+    if (v2.x || v2.z) touch(id);
     inputs.set(id, v2);
   };
-  const action = (id) => { actions.add(id); lastActive.set(id, now); };
+  const action = (id) => { actions.add(id); touch(id); };
+
+  // ── Lobby ──────────────────────────────────────────────────
+  function setName(id, name) {
+    const p = state.players.get(id), n = cleanName(name);
+    if (p && n) p.name = n;
+    touch(id);
+  }
+  function setReady(id, ready) {
+    const p = state.players.get(id);
+    if (!p || state.phase !== 'lobby' && state.phase !== 'countdown') return;
+    p.ready = !!ready;
+    touch(id);
+  }
+  // Swap sides in the lobby. KAIJU: desktop only, seat must be free or its holder AFK.
+  function setRole(id, role) {
+    const p = state.players.get(id);
+    touch(id);
+    if (!p || p.role === role || (state.phase !== 'lobby' && state.phase !== 'countdown')) return false;
+    if (role === 'kaiju') {
+      if (p.mobile) return false;
+      if (kaiju() && !takeOverIdleKaiju()) return false;
+      p.role = 'kaiju'; p.slot = -1; p.ready = false;
+      while (p.soldiers.length) p.soldiers.pop();
+      trails.delete(id);
+      placeKaiju(p);
+    } else if (role === 'tank') {
+      const slot = freeSlot();
+      if (slot >= T.maxTanks) return false;
+      p.role = 'tank'; p.slot = slot; p.ready = false;
+      placeTank(p, id, SPAWNS.tanks[slot % SPAWNS.tanks.length]);
+    } else return false;
+    rescale();
+    return true;
+  }
+  // Can the round start? Needs an active kaiju and tank, and every non-AFK player ready.
+  function lobbyReady() {
+    const k = kaiju();
+    if (!k || k.afk || !k.ready) return false;
+    let readyTanks = 0;
+    for (const p of state.players.values()) {
+      if (p.afk) continue;
+      if (!p.ready) return false;
+      if (p.role === 'tank') readyTanks++;
+    }
+    return readyTanks > 0;
+  }
 
   // ── Round flow ─────────────────────────────────────────────
   function resetRound() {
@@ -170,10 +225,13 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       p.boostIn = 0; p.strikeIn = 0;
       timers.delete(id);
     }
-    state.phase = 'waiting';
+    // Straight into the next round if both sides are still here; otherwise back to the lobby.
+    if (kaiju() && tanks().length) { state.phase = 'countdown'; state.clock = T.countdownSeconds; fromLobby = false; emit('countdown', {}); }
+    else { state.phase = 'lobby'; for (const p of state.players.values()) p.ready = false; }
     rescale();
   }
 
+  let fromLobby = false;  // countdown started by ready-up (cancellable) vs. next round (not)
   function endRound(winner) {
     state.phase = 'ended'; state.winner = winner; state.clock = T.endScreenSeconds;
     emit('end', { winner, score: state.kaijuScore });
@@ -283,11 +341,15 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const k = kaiju();
     const tankList = tanks();
 
+    // AFK flags (shown in the lobby; AFK players don't block the start)
+    for (const [id, p] of state.players) { const a = isAfk(id); if (p.afk !== a) p.afk = a; }
+
     // Phase clock
-    if (state.phase === 'waiting') {
-      if (k && tankList.length) { state.phase = 'countdown'; state.clock = T.countdownSeconds; emit('countdown', {}); }
+    if (state.phase === 'lobby') {
+      if (lobbyReady()) { state.phase = 'countdown'; state.clock = T.countdownSeconds; fromLobby = true; emit('countdown', {}); }
     } else if (state.phase === 'countdown') {
-      if (!k || !tankList.length) state.phase = 'waiting';
+      if (!k || !tankList.length) { state.phase = 'lobby'; for (const p of state.players.values()) p.ready = false; }
+      else if (fromLobby && !lobbyReady()) state.phase = 'lobby'; // someone un-readied
       else if ((state.clock -= dt) <= 0) {
         state.phase = 'playing'; state.clock = T.matchSeconds; state.kaijuHp = state.kaijuMaxHp;
         emit('start', {});
@@ -375,5 +437,6 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   rescale();
-  return { city, join, leave, input, action, tick, destroyed, pickRespawn, teleport };
+  return { city, join, leave, input, action, tick, destroyed, pickRespawn, teleport,
+           setName, setReady, setRole, isAfk };
 }

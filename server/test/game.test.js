@@ -14,7 +14,7 @@ function setup(nTanks = 1, opts = {}) {
   g.join('K', { role: 'kaiju' });
   for (let i = 0; i < nTanks; i++) g.join(`T${i}`, { role: 'tank', ...opts });
   const run = (sec) => { for (let t = 0; t < sec - 1e-9; t += 0.05) g.tick(0.05); };
-  if (!opts.noStart) run(T.countdownSeconds + 0.1);
+  if (!opts.noStart) { for (const id of state.players.keys()) g.setReady(id, true); run(T.countdownSeconds + 0.1); }
   const place = (p, x, z) => g.teleport([...state.players].find(([, v]) => v === p)[0], x, z);
   return { g, state, events, run, place, K: state.players.get('K'), T0: state.players.get('T0') };
 }
@@ -27,12 +27,57 @@ test('round starts after the countdown, with HP scaled to tank count', () => {
   assert.ok(Math.abs(state.kaijuSpeed - kaijuSpeedFor(3)) < 1e-9);
 });
 
-test('waiting: no countdown without both a kaiju and a tank', () => {
+test('lobby: no countdown without both a kaiju and a tank', () => {
   const state = plainMake.state();
   const g = createGame({ state });
-  g.join('K', {});
+  g.join('K', {}); g.setReady('K', true);
   for (let i = 0; i < 100; i++) g.tick(0.05);
-  assert.equal(state.phase, 'waiting');
+  assert.equal(state.phase, 'lobby');
+});
+
+test('lobby: the round starts only when every active player is ready', () => {
+  const state = plainMake.state();
+  const g = createGame({ state });
+  g.join('K', { name: 'Justin' }); g.join('A', { name: 'Ana' }); g.join('B', { name: 'Bo' });
+  assert.equal(state.players.get('K').name, 'Justin');
+  g.setReady('K', true); g.setReady('A', true);
+  for (let i = 0; i < 20; i++) g.tick(0.05);
+  assert.equal(state.phase, 'lobby', 'B is not ready');
+  g.setReady('B', true); g.tick(0.05);
+  assert.equal(state.phase, 'countdown');
+  g.setReady('A', false); g.tick(0.05);
+  assert.equal(state.phase, 'lobby', 'un-ready cancels the countdown');
+});
+
+test('lobby: AFK players do not block the start; an AFK kaiju seat can be taken', () => {
+  const state = plainMake.state();
+  const g = createGame({ state });
+  g.join('K', {}); g.join('A', {}); g.join('Ghost', {});
+  const run = (sec) => { for (let t = 0; t < sec; t += 0.05) { g.input('K', { x: 0.01, z: 0 }); g.input('A', { x: 0.01, z: 0 }); g.tick(0.05); } };
+  run(T.afkSeconds + 0.5);
+  assert.equal(state.players.get('Ghost').afk, true);
+  g.setReady('K', true); g.setReady('A', true); g.tick(0.05);
+  assert.equal(state.phase, 'countdown', 'ghost ignored');
+  // AFK kaiju: someone else can claim the seat
+  const s2 = plainMake.state(); const g2 = createGame({ state: s2 });
+  g2.join('OldK', {}); g2.join('T', {});
+  for (let t = 0; t < T.afkSeconds + 0.5; t += 0.05) { g2.input('T', { x: 0.01, z: 0 }); g2.tick(0.05); }
+  assert.equal(g2.setRole('T', 'kaiju'), true);
+  assert.equal(s2.players.get('T').role, 'kaiju');
+  assert.equal(s2.players.get('OldK').role, 'tank');
+});
+
+test('lobby: roles swap only when the seat is free; phones stay tanks; names are cleaned', () => {
+  const state = plainMake.state();
+  const g = createGame({ state });
+  g.join('K', { name: '  <b>Ka iju</b>  ' }); g.join('A', {}); g.join('P', { mobile: true });
+  assert.equal(state.players.get('K').name, 'bKa ijub');
+  assert.equal(g.setRole('A', 'kaiju'), false, 'active kaiju keeps the seat');
+  assert.equal(g.setRole('P', 'kaiju'), false, 'phones cannot be the kaiju');
+  assert.equal(g.setRole('K', 'tank'), true);
+  assert.equal(g.setRole('A', 'kaiju'), true, 'free seat can be taken');
+  assert.equal(state.players.get('A').role, 'kaiju');
+  g.setName('A', 'Ana'); assert.equal(state.players.get('A').name, 'Ana');
 });
 
 test('phones always get a tank, even when first to join', () => {
@@ -82,11 +127,11 @@ test('strikeRange: 1 reaches only the building beside the kaiju; 2 reaches furth
 
 test('picking KAIJU takes the seat from an idle kaiju, not an active one', () => {
   const { g, state, run } = setup(1);
-  g.input('K', { x: 1, z: 0 });            // active kaiju
+  g.input('K', { x: 1, z: 0 }); g.tick(0.05);  // active kaiju
   assert.equal(g.join('D', { role: 'kaiju' }), 'tank', 'active kaiju keeps the seat');
   g.leave('D');
   g.input('K', { x: 0, z: 0 });
-  run(T.kaijuIdleTakeover + 0.5);          // kaiju goes idle
+  run(T.afkSeconds + 0.5);                 // kaiju goes AFK
   assert.equal(g.join('D', { role: 'kaiju' }), 'kaiju');
   assert.equal(state.players.get('K').role, 'tank', 'idle kaiju became a tank');
   assert.equal(g.join('P', { role: 'kaiju', mobile: true }), 'tank', 'phones never take the kaiju');

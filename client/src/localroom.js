@@ -9,8 +9,9 @@ export function createLocalRoom() {
   const state = plainMake.state();
   const handlers = {};
   const game = createGame({ state, emit: (type, data) => handlers.fx?.({ type, ...data }) });
-  game.join('kaiju', { role: 'kaiju' });
-  for (let i = 0; i < TUNING.maxTanks; i++) game.join(`tank${i}`, { role: 'tank' });
+  game.join('kaiju', { role: 'kaiju', name: 'Kaiju' });
+  for (let i = 0; i < TUNING.maxTanks; i++) game.join(`tank${i}`, { role: 'tank', name: `Tank ${i + 1}` });
+  for (const id of state.players.keys()) game.setReady(id, true); // sandbox: no lobby wait
   const order = [...state.players.keys()];
 
   const room = {

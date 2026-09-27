@@ -86,19 +86,27 @@ async function boot() {
   if (OFFLINE) {
     room = createLocalRoom();
   } else {
-    // Desktop players choose a side first (?role=kaiju / ?role=tank skips this). Phones are tanks.
-    const wanted = MOBILE ? 'tank' : (params.get('role') || await hud.pickRole());
+    // Everyone enters a name first (?name= skips it). Sides are picked in the lobby;
+    // ?role=kaiju / ?role=tank still works as a starting preference. Phones are tanks.
+    const name = params.get('name') || await hud.askName();
+    const wanted = MOBILE ? 'tank' : (params.get('role') || undefined);
     wantedRole = wanted;
     setStatus('connecting…');
     try {
-      room = await new Client(SERVER).joinOrCreate('match', { role: wanted, mobile: MOBILE });
+      room = await new Client(SERVER).joinOrCreate('match', { role: wanted, mobile: MOBILE, name });
     } catch (e) {
       console.error(e);
       setStatus(/full|locked/i.test(String(e?.message)) ? 'This match is full — try again after a round ends'
                                                         : `could not reach the game server (${SERVER})`);
       return;
     }
-    room.onLeave(() => setStatus('disconnected — reload to rejoin'));
+    room.onLeave((code) => setStatus(code === 4001 ? 'You were removed from the lobby — reload to rejoin'
+                                                   : 'disconnected — reload to rejoin'));
+    hud.onLobby({
+      ready: (r) => room.send('ready', { ready: r }),
+      role: (r) => room.send('role', { role: r }),
+      kick: (id) => room.send('kick', { id }),
+    });
   }
   setStatus('');
   room.onMessage('fx', onFx);
@@ -137,7 +145,10 @@ function onFx(e) {
     case 'end': if (e.winner === 'tanks') k?.view.die(); break;
     case 'start': k?.view.revive(); break;
     case 'kaijuReplaced':
-      if (e.id === room.sessionId) hud.toast('You were idle, so another player took over the kaiju. You\'re a tank now.', 8);
+      if (e.id === room.sessionId) hud.toast('You were AFK, so another player took over the kaiju. You\'re a tank now.', 8);
+      break;
+    case 'kicked':
+      if (e.id !== room.sessionId) hud.toast(`${e.by || 'Someone'} removed a player from the lobby.`, 4);
       break;
   }
 }
@@ -275,7 +286,7 @@ function frame(ts) {
   if (me && !roleNoticeDone && !OFFLINE) {
     roleNoticeDone = true;
     if (!MOBILE && wantedRole === 'kaiju' && me.role === 'tank') {
-      hud.toast(`Someone is already the kaiju, so you're a tank. The seat frees up if they leave or sit idle for ${TUNING.kaijuIdleTakeover}s — reload and pick KAIJU again then.`, 9);
+      hud.toast(`Someone is already the kaiju, so you're a tank. Use PLAY KAIJU in the lobby if the seat frees up.`, 9);
     }
   }
   if (me) {

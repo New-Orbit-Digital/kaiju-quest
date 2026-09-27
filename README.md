@@ -2,13 +2,13 @@
 
 Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to three players drive **tanks**, trying to kill it. WASD + Space.
 
-**Status:** Packet 02 is playable: the full combat loop (strikes, rubble, auto-firing tanks, soldiers, stomps, boost, respawns, a 5-minute round and an end screen) plus phone support for tanks. The lobby and a polish pass come in Packet 03.
+**Status:** playable. Full combat loop (strikes, rubble, auto-firing tanks, soldiers, stomps, boost, respawns, a 5-minute round and an end screen), phone support for tanks, and a ready-up lobby with player names.
 
 Live playtest: https://kaiju-quest.onrender.com. Open it on a phone to drive a tank with the on-screen joystick.
 
 ## Playtest (Render)
 
-`render.yaml` is a Render Blueprint for one free web service. It builds the client and runs the game server, which also serves the page, so everyone opens the same URL. Desktop players pick **KAIJU** or **TANK** when the page opens (`?role=kaiju` / `?role=tank` skips the picker). If the kaiju seat is taken you get a tank and a note explaining why; the seat frees up when the kaiju leaves or sits idle (`kaijuIdleTakeover`, 30s). Phones are always tanks (`?desktop` forces desktop mode on a touch device). The free tier sleeps when idle, so the first visit can take about a minute.
+`render.yaml` is a Render Blueprint for one free web service. It builds the client and runs the game server, which also serves the page, so everyone opens the same URL. Everyone types a name, then lands in the **lobby** (a free-roam city with no combat). Pick a side there (**PLAY KAIJU** / **PLAY TANK**, kaiju is desktop only) and hit **READY**. The round starts when every active player is ready. Players with no input for `afkSeconds` (60) show as AFK and don't hold up the start; anyone can take an AFK kaiju's seat, and anyone can remove a player from the lobby with ✕. After a round ends, the next one starts automatically. Name tags float over every unit. Phones are always tanks (`?desktop` forces desktop mode on a touch device; `?name=` skips the name screen). The free tier sleeps when idle, so the first visit can take about a minute.
 
 ## Run it locally
 
@@ -23,7 +23,7 @@ Open two browser windows:
 - `http://localhost:5173/?role=kaiju`
 - `http://localhost:5173/?role=tank`
 
-Without `?role`, the first player to join becomes the kaiju and everyone after that gets a tank. A proper lobby comes in Packet 03. Add `&server=ws://host:port` to point at another server.
+Sides are picked in the lobby. `?role=kaiju` / `?role=tank` sets a starting preference, and `&server=ws://host:port` points at another server.
 
 ## Where to change things
 
@@ -41,7 +41,7 @@ Restart the server after changing `shared/`. Vite reloads the client on its own.
 ## Tests
 
 ```bash
-npm test          # 22 tests: rules, movement, collisions, scaling + a live two-client server test
+npm test          # 27 tests: rules, movement, collisions, scaling + a live two-client server test
 npm run shots     # builds the client, plays a short round with a desktop kaiju vs an emulated-phone tank, saves docs/shots/p02-*.png
 node tools/build-sandbox.mjs   # single-file offline sandbox (client/dist-sandbox/kaiju-sandbox.html)
 ```
