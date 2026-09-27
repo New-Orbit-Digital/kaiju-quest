@@ -22,7 +22,7 @@ export const TUNING = {
   kaijuHpPerTank:     100,   // kaiju health = this × number of tanks (no regen)
   viewTilesKaiju:     15,    // ZOOM: tiles visible top-to-bottom (bigger = zoomed out)
 
-  // Smashing (E) — each press is one strike on the building beside the kaiju.
+  // Smashing (SPACE) — each press is one strike on the building beside the kaiju.
   // Building damage is permanent: walk away and come back, it's still hurt.
   strikeDamage:       10,    // building HP removed per strike
   strikeCooldown:     0.5,   // seconds between strikes (lower = faster smashing)
@@ -42,7 +42,7 @@ export const TUNING = {
   tankDamage:         2,     // kaiju HP removed per shot
   tankFireInterval:   1.2,   // FIRE RATE: one shot every N seconds (lower = faster)
 
-  // Boost (E / phone BOOST button)
+  // Boost (SPACE / phone BOOST button)
   boostMultiplier:    2.0,   // speed × this while boosting
   boostSeconds:       1.5,   // how long a boost lasts
   boostCooldown:      15,    // seconds before boost can be used again

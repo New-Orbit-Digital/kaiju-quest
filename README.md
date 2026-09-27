@@ -1,6 +1,6 @@
 # Kaiju Quest
 
-Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to three players drive **tanks**, trying to kill it. WASD + E.
+Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to three players drive **tanks**, trying to kill it. WASD + Space.
 
 **Status:** Packet 02 is playable: the full combat loop (strikes, rubble, auto-firing tanks, soldiers, stomps, boost, respawns, a 5-minute round and an end screen) plus phone support for tanks. The lobby and a polish pass come in Packet 03.
 

@@ -191,8 +191,8 @@ function updateSideHud(me) {
   let tanks = 0;
   room.state.players.forEach(p => { if (p.role === 'tank') tanks++; });
   const help = me.role === 'kaiju'
-    ? 'WASD move · E smash the building beside you<br>Walk into tanks & soldiers to crush them'
-    : 'WASD move · turret fires on its own<br>E boost (15s cooldown)';
+    ? 'WASD move · SPACE smash the building beside you<br>Walk into tanks & soldiers to crush them'
+    : 'WASD move · turret fires on its own<br>SPACE boost (15s cooldown)';
   hudBody.innerHTML =
     `You are ${swatch}<span class="role-${me.role}">${roleName}</span><br>` +
     `Tanks: ${tanks}/${TUNING.maxTanks} · Kaiju speed ${room.state.kaijuSpeed.toFixed(2)}<br>` +
@@ -220,7 +220,7 @@ function clearUnits() {
 }
 addEventListener('keydown', (e) => {
   if (!room) return;
-  if (e.code === 'KeyE' && !e.repeat) room.send('action');
+  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) room.send('action'); } // smash / boost
   if (!room.offline) return;
   // Sandbox-only keys: Tab swaps unit, C camera angle, V controls.
   if (e.code === 'Tab') {

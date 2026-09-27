@@ -42,7 +42,7 @@ test('phones always get a tank, even when first to join', () => {
   assert.equal(g.join('D', {}), 'kaiju');
 });
 
-test('E strike: damage is permanent building HP; destroyed → rubble + points', () => {
+test('SPACE strike: damage is permanent building HP; destroyed → rubble + points', () => {
   const { g, state, events, run, K, T0, place } = setup(1);
   place(T0, 24, 24);                 // keep the tank out of range
   place(K, 1, 3); K.rot = 0;         // street tile; house at (1,4) to the south

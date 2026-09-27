@@ -66,7 +66,7 @@ try {
   // Kaiju steps one tile north (tower to its west), then smashes it 3 times
   await holdUntil(kaiju, 'KeyW', () => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z <= 11.05; }));
   const hp0 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
-  for (let i = 0; i < 3; i++) { await kaiju.keyboard.press('KeyE'); await sleep(650); }
+  for (let i = 0; i < 3; i++) { await kaiju.keyboard.press('Space'); await sleep(650); }
   const hp1 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
   const hit = hp0.map((h, i) => h - hp1[i]).reduce((a, b) => a + b, 0);
   check(hit === 30, `3 strikes took ${hit} building HP (expected 30)`);

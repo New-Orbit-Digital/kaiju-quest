@@ -97,8 +97,8 @@ export function createHud({ mobile }) {
       } else if (playing && me.role === 'tank' && !me.alive) {
         b = `Crushed!<small>Back in action in ${Math.max(1, Math.ceil(me.respawnIn))}</small>`;
       } else if (playing && state.clock > T0() - 2.5) {
-        b = me.role === 'kaiju' ? 'SMASH!<small>E next to a building · walk into tanks and soldiers</small>'
-                                : 'HUNT THE KAIJU<small>Your turret fires on its own · E to boost away</small>';
+        b = me.role === 'kaiju' ? 'SMASH!<small>SPACE next to a building · walk into tanks and soldiers</small>'
+                                : 'HUNT THE KAIJU<small>Your turret fires on its own · SPACE to boost away</small>';
       }
       banner.hidden = !b; banner.innerHTML = b; banner.classList.toggle('big', big);
 
@@ -123,8 +123,8 @@ export function createHud({ mobile }) {
         const ready = left <= 0;
         ability.classList.toggle('ready', ready);
         ability.querySelector('span').textContent = kaijuSide
-          ? (ready ? 'E  SMASH — ready' : 'E  SMASH')
-          : (me.boosting ? 'BOOSTING' : ready ? 'E  BOOST — ready' : `E  BOOST  ${Math.ceil(left)}s`);
+          ? (ready ? 'SPACE  SMASH — ready' : 'SPACE  SMASH')
+          : (me.boosting ? 'BOOSTING' : ready ? 'SPACE  BOOST — ready' : `SPACE  BOOST  ${Math.ceil(left)}s`);
         ability.querySelector('.bar i').style.width = `${(1 - left / total) * 100}%`;
       }
 
