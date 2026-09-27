@@ -1,18 +1,36 @@
 import { Room } from 'colyseus';
 import { MatchState, Player, Civilian, Roadblock } from './schema.js';
 import { TUNING } from '../../shared/tuning.js';
-import { createGame } from '../../shared/game.js';
+import { createGame, KAIJU_SEATS } from '../../shared/game.js';
 import { createBots } from '../../shared/bots.js';
+
+// Room codes: every room gets one (share links); private rooms are also
+// hidden from PLAY matchmaking. code → roomId, for this server process.
+const codes = new Map();
+const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';   // no I / O (look like 1 / 0)
+function newCode() {
+  for (;;) {
+    let c = '';
+    for (let i = 0; i < TUNING.roomCodeLength; i++) c += LETTERS[Math.floor(Math.random() * LETTERS.length)];
+    if (!codes.has(c)) return c;
+  }
+}
+export const roomIdForCode = (code) => codes.get(String(code || '').toUpperCase().trim());
 
 // Thin wrapper: all rules live in shared/game.js.
 export class KaijuRoom extends Room {
-  maxClients = 1 + TUNING.maxTanks;
+  maxClients = KAIJU_SEATS;
 
-  onCreate() {
+  onCreate(options = {}) {
     const state = new MatchState();
+    state.code = newCode(); state.private = !!options.private;
+    codes.set(state.code, this.roomId);
+    this.setMetadata({ code: state.code });
+    if (state.private) this.setPrivate(true);
     state.phase = 'lobby'; state.clock = 0; state.winner = '';
-    state.kaijuHp = 0; state.kaijuMaxHp = 0; state.kaijuScore = 0; state.kaijuSpeed = 0;
-    state.mode = ''; state.hillX = 0; state.hillZ = 0; state.hillIn = 0; state.evacuated = 0;
+    state.kaijuScore = 0; state.tankScore = 0; state.kaijuSpeed = 0;
+    state.mode = ''; state.hillX = 0; state.hillZ = 0; state.hillIn = 0; state.evacuated = 0; state.stomped = 0;
+    state.bonus = ''; state.bonusIn = 0; state.healIn = 0; state.crateOn = false; state.crateX = 0; state.crateZ = 0; state.crateIn = 0;
     this.setState(state);
     this.game = createGame({
       state: this.state,
@@ -33,6 +51,11 @@ export class KaijuRoom extends Room {
     this.onMessage('ready', (client, msg) => this.game.setReady(client.sessionId, !!msg?.ready));
     this.onMessage('role', (client, msg) => this.game.setRole(client.sessionId, msg?.role));
     this.onMessage('name', (client, msg) => this.game.setName(client.sessionId, msg?.name));
+    // Test hook for the automated browser checks only (never set in production).
+    if (process.env.KQ_TEST) {
+      this.onMessage('debugTeleport', (client, msg) => this.game.teleport(client.sessionId, Number(msg?.x), Number(msg?.z)));
+      this.onMessage('debugCrate', () => this.game.spawnCrate());
+    }
     this.onMessage('mode', (client, msg) => this.game.setMode(client.sessionId, String(msg?.mode || '')));
     // Anyone can remove another player from the lobby (for ghosts / old tabs).
     this.onMessage('kick', (client, msg) => {
@@ -51,15 +74,17 @@ export class KaijuRoom extends Room {
     }, dtMs);
   }
 
+  onDispose() { codes.delete(this.state.code); }
+
   onJoin(client, options = {}) {
-    // people outrank bots: free a tank seat (or the kaiju seat) held by a bot if needed
+    // people outrank bots: free a seat held by a bot if needed
     let tanks = 0, botTank = null, botKaiju = null;
     this.state.players.forEach((p, id) => {
       if (p.role === 'tank') { tanks++; if (p.bot) botTank = id; }
       else if (p.bot) botKaiju = id;
     });
-    if (tanks >= TUNING.maxTanks && botTank) this.bots.remove(botTank);
-    else if (tanks >= TUNING.maxTanks && botKaiju) this.bots.remove(botKaiju);
+    const full = this.state.mode === 'koth' ? this.state.players.size >= KAIJU_SEATS : tanks >= TUNING.maxTanks;
+    if (full) { const b = botTank || botKaiju; if (b) this.bots.remove(b); }
     this.game.join(client.sessionId, { role: options.role, mobile: !!options.mobile, name: options.name });
   }
 

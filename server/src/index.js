@@ -3,7 +3,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import express from 'express';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { KaijuRoom } from './KaijuRoom.js';
+import { KaijuRoom, roomIdForCode } from './KaijuRoom.js';
 import { TUNING } from '../../shared/tuning.js';
 
 // Test hook: shorter rounds for automated checks (never set in production).
@@ -20,6 +20,14 @@ export async function startServer(port = Number(process.env.PORT) || 2567) {
     express: (app) => {
       if (existsSync(CLIENT_DIST)) app.use(express.static(CLIENT_DIST));
       app.get('/health', (_req, res) => res.send('ok'));
+      // Room code → room id, for share links / "join with code" (the page may be
+      // served from another site, e.g. justbost.com, so allow any origin).
+      app.get('/room/:code', (req, res) => {
+        res.set('Access-Control-Allow-Origin', '*');
+        const roomId = roomIdForCode(req.params.code);
+        if (!roomId) return res.status(404).json({ error: 'not-found' });
+        res.json({ roomId });
+      });
     },
   });
   server.define('match', KaijuRoom);

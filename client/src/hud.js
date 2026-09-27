@@ -2,7 +2,7 @@
 // the tanks' edge arrow to the kaiju, and phone-only unit markers.
 import * as THREE from 'three';
 import { TUNING } from '../../shared/tuning.js';
-import { colourHex } from './units.js';
+import { colourHex, kaijuHex } from './units.js';
 import { keyNames } from './input.js';
 import { MODES, MODE_NAMES, BETA_MODES } from '../../shared/game.js';
 
@@ -28,6 +28,20 @@ const CSS = `
 #kq-mute { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 6; width: 40px; height: 40px;
   border-radius: 50%; border: 0; background: rgba(12,16,24,.78); color: #eef2f6; font: 700 16px/1 system-ui, sans-serif; cursor: pointer; }
 .kq-mobile #kq-mute { bottom: auto; top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; width: 34px; height: 34px; font-size: 14px; }
+#kq-top .score small { opacity: .7; font-weight: 500; }
+#kq-top > div { white-space: nowrap; }
+#kq-top .score, #kq-top .extra { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+#kq-top .score .k { color: #7dff8a; } #kq-top .score .t { color: #8fb0ff; }
+#kq-split { position: fixed; top: calc(52px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+  width: min(420px, calc(100% - 32px)); height: 10px; border-radius: 5px; background: #3a4558; overflow: hidden; z-index: 5; pointer-events: none; }
+#kq-split i { position: absolute; top: 0; bottom: 0; transition: width .3s; }
+#kq-split .k { left: 0; background: #7dff8a; } #kq-split .t { right: 0; background: #8fb0ff; }
+#kq-split::after { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px; background: #fff; }
+#kq-cratearrow { position: fixed; width: 0; height: 0; z-index: 5; pointer-events: none; }
+#kq-cratearrow::before { content: ''; position: absolute; left: -16px; top: -14px; border-left: 28px solid #f5b82e;
+  border-top: 14px solid transparent; border-bottom: 14px solid transparent; filter: drop-shadow(0 0 4px rgba(0,0,0,.8)); }
+#kq-cratearrow span { position: absolute; left: -40px; top: 16px; width: 80px; text-align: center; color: #fff;
+  font: 700 11px/1 system-ui, sans-serif; text-shadow: 0 1px 3px #000; }
 #kq-hillarrow { position: fixed; width: 0; height: 0; z-index: 5; pointer-events: none; }
 #kq-hillarrow::before { content: ''; position: absolute; left: -16px; top: -14px; border-left: 28px solid #f5b82e;
   border-top: 14px solid transparent; border-bottom: 14px solid transparent; filter: drop-shadow(0 0 4px rgba(0,0,0,.8)); }
@@ -69,6 +83,14 @@ const CSS = `
 #kq-pick input { display: block; width: 100%; box-sizing: border-box; margin-top: 12px; padding: 12px 14px; border-radius: 6px;
   border: 2px solid #3a4558; background: #0b1018; color: #fff; font: 600 18px/1.2 system-ui, sans-serif; text-align: center; }
 #kq-pick input:focus { outline: none; border-color: #f5b82e; }
+#kq-pick .note { color: #ffd9a8; margin: 4px 0 2px; font-size: 14px; }
+#kq-pick .code-row { display: flex; gap: 8px; margin-top: 14px; }
+#kq-pick .code-row input { margin: 0; flex: 1; letter-spacing: .3em; font-size: 16px; padding: 10px; }
+#kq-pick .code-row button { min-width: 0; padding: 10px 14px; font-size: 13px; background: #2b3444; color: #eef2f6; }
+#kq-lobby .room { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; background: rgba(255,255,255,.06); }
+#kq-lobby .room b { font: 900 18px/1 system-ui, sans-serif; letter-spacing: .15em; color: #f5b82e; }
+#kq-lobby .room small { color: #a9b4c2; flex: 1; }
+#kq-lobby .room button { border: 0; border-radius: 6px; padding: 8px 10px; cursor: pointer; background: #f5b82e; color: #141a24; font: 800 12px/1 system-ui, sans-serif; }
 #kq-lobby { position: fixed; right: 16px; top: calc(12px + env(safe-area-inset-top, 0px)); width: min(340px, calc(100% - 32px));
   max-height: calc(100% - 40px); overflow: auto; background: rgba(14,19,28,.94); border-radius: 8px; border-top: 4px solid #f5b82e;
   padding: 14px 16px; color: #eef2f6; font: 500 14px/1.4 system-ui, sans-serif; z-index: 7; }
@@ -127,6 +149,8 @@ export function createHud({ mobile }) {
   const el = (html) => { const d = document.createElement('div'); d.innerHTML = html; const n = d.firstElementChild; document.body.appendChild(n); return n; };
   const top = el(`<div id="kq-top" hidden><div class="hp"><i></i><b></b></div><div class="clock"></div><div class="score"></div><div class="extra"></div></div>`);
   const hillArrow = el(`<div id="kq-hillarrow" hidden><span>HILL</span></div>`);
+  const crateArrow = el(`<div id="kq-cratearrow" class="kq-goldarrow" hidden><span>CRATE</span></div>`);
+  const split = el(`<div id="kq-split" hidden><i class="k"></i><i class="t"></i></div>`);
   const muteBtn = el(`<button id="kq-mute" type="button" title="Sound on/off (M)">🔊</button>`);
   let endSig = '';
   const banner = el(`<div id="kq-banner" hidden></div>`);
@@ -149,7 +173,7 @@ export function createHud({ mobile }) {
 
   const toastEl = el(`<div id="kq-toast" hidden></div>`);
   const lobby = el(`<div id="kq-lobby" hidden></div>`);
-  let lobbySig = '', handlers = {}, fromLobby = false;
+  let lobbySig = '', handlers = {}, fromLobby = false, copied = false;
   const tags = new Map();
   const esc = (t) => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   let toastTimer = null;
@@ -179,23 +203,34 @@ export function createHud({ mobile }) {
       muteBtn.addEventListener('click', () => { const m = fn(); muteBtn.textContent = m ? '🔇' : '🔊'; muteBtn.blur(); });
     },
     setMuted(m) { muteBtn.textContent = m ? '🔇' : '🔊'; },
-    // Name entry before joining (remembered on this device).
-    askName() {
+    // Join screen: name (remembered on this device), then PLAY (public game),
+    // CREATE ROOM (private, with a code) or a code. `code` pre-fills a share link.
+    askJoin({ code = '', note = '' } = {}) {
       let saved = '';
       try { saved = localStorage.getItem('kq-name') || ''; } catch {}
       return new Promise((resolve) => {
         const card = el(`<div id="kq-pick"><form class="card"><h2>KAIJU QUEST</h2>
+          ${note ? `<div class="note">${esc(note)}</div>` : ''}
           <input id="kq-name" maxlength="16" autocomplete="nickname" placeholder="Your name" />
-          <div class="row"><button class="k" type="submit">JOIN</button></div></form></div>`);
-        const input = card.querySelector('#kq-name');
+          <div class="row">${code && !note
+            ? `<button class="k" type="submit" data-how="code">JOIN ROOM ${esc(code)}</button>`
+            : `<button class="k" type="submit" data-how="public">PLAY</button>`}
+            <button class="t" type="button" data-how="create">CREATE ROOM<small>private, with a share link</small></button></div>
+          <div class="code-row"><input id="kq-code" maxlength="${TUNING.roomCodeLength}" autocomplete="off" placeholder="CODE" value="${esc(note ? code : '')}" />
+            <button type="button" data-how="code">JOIN CODE</button></div></form></div>`);
+        const input = card.querySelector('#kq-name'), codeIn = card.querySelector('#kq-code');
         input.value = saved;
-        card.querySelector('form').addEventListener('submit', (e) => {
-          e.preventDefault();
+        codeIn.addEventListener('input', () => { codeIn.value = codeIn.value.toUpperCase().replace(/[^A-Z]/g, ''); });
+        const go = (how) => {
           const name = input.value.trim().slice(0, 16);
           if (!name) { input.focus(); return; }
+          const c = how === 'code' ? (codeIn.value || code).toUpperCase() : '';
+          if (how === 'code' && c.length !== TUNING.roomCodeLength) { codeIn.focus(); return; }
           try { localStorage.setItem('kq-name', name); } catch {}
-          card.remove(); resolve(name);
-        });
+          card.remove(); resolve({ name, how, code: c });
+        };
+        card.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); go(e.submitter?.dataset.how || (code && !note ? 'code' : 'public')); });
+        card.querySelectorAll('button[type=button]').forEach(bt => bt.addEventListener('click', () => go(bt.dataset.how)));
         setTimeout(() => input.focus(), 50);
       });
     },
@@ -220,31 +255,44 @@ export function createHud({ mobile }) {
         rows.push({ id, name: p.name, role: p.role, slot: p.slot, ready: p.ready, afk: p.afk, mobile: p.mobile, bot: p.bot });
       });
       rows.sort((a, b) => (a.role === 'kaiju' ? -1 : 0) - (b.role === 'kaiju' ? -1 : 0) || a.slot - b.slot);
-      const sig = JSON.stringify([state.phase, Math.ceil(state.clock), rows, myId, state.mode]);
+      const sig = JSON.stringify([state.phase, Math.ceil(state.clock), rows, myId, state.mode, state.code, copied]);
       if (sig === lobbySig) return;
       lobbySig = sig;
-      const canKaiju = !me.mobile && me.role !== 'kaiju' && (!hasK || kaijuAfk);
+      const koth = state.mode === 'koth';
+      const canKaiju = me.role !== 'kaiju' && (!hasK || kaijuAfk);
       const canTank = me.role === 'kaiju' && tanks < TUNING.maxTanks;
       const status = state.phase === 'countdown'
         ? `Starting in ${Math.max(1, Math.ceil(state.clock))}…`
-        : !hasK ? 'Needs a kaiju (desktop only).'
+        : koth ? (rows.length < 2 ? 'Needs at least two players (add a bot to practise).' : 'Everyone is a kaiju. Starts when everyone is ready.')
+        : !hasK ? 'Needs a kaiju.'
         : !tanks ? 'Needs at least one tank.'
         : 'Starts when everyone is ready. AFK players don\'t hold it up.';
-      lobby.innerHTML = `<h3>LOBBY</h3><div class="sub">${esc(status)}</div>` +
+      const roomRow = state.code ? `<div class="room"><b>${esc(state.code)}</b><small>${state.private ? 'Private room' : 'Public game'} · invite friends</small>` +
+        `<button type="button" data-share>${copied === true ? 'COPIED ✓' : 'COPY LINK'}</button></div>` +
+        (typeof copied === 'string' ? `<div class="sub">Copy this link: ${esc(copied)}</div>` : '') : '';
+      lobby.innerHTML = `<h3>LOBBY</h3><div class="sub">${esc(status)}</div>` + roomRow +
         (state.phase === 'lobby' ? `<div class="kq-modes-label">GAME MODE</div>${modeBar(state.mode)}` : '') + `<ul>` + rows.map(r => {
-        const col = r.role === 'kaiju' ? '#7dff8a' : colourHex(r.slot);
+        const col = r.role === 'kaiju' ? (koth ? kaijuHex(r.slot) : '#7dff8a') : colourHex(r.slot);
         const st = r.afk ? '<span class="st afk">AFK</span>' : r.ready ? '<span class="st ready">READY</span>' : '<span class="st wait">NOT READY</span>';
         const kick = r.id !== myId ? `<button class="kick" type="button" data-kick="${esc(r.id)}" title="Remove from the lobby">✕</button>` : '<span></span>';
         return `<li class="${r.id === myId ? 'me' : ''}"><span class="sw" style="background:${col}"></span>` +
           `<span class="nm">${esc(r.name || 'Player')}<small>${r.role === 'kaiju' ? 'kaiju' : 'tank'}${r.bot ? ' · bot' : ''}${r.mobile ? ' · phone' : ''}${r.id === myId ? ' · you' : ''}</small></span>${st}${kick}</li>`;
       }).join('') + `</ul><div class="acts">` +
         `<button class="rdy${me.ready ? ' on' : ''}" type="button" data-act="ready">${me.ready ? 'NOT READY' : 'READY'}</button>` +
-        (me.mobile ? '' : me.role === 'kaiju'
+        (koth ? '' : me.role === 'kaiju'
           ? `<button class="swap" type="button" data-act="tank" ${canTank ? '' : 'disabled'}>PLAY TANK</button>`
           : `<button class="swap" type="button" data-act="kaiju" ${canKaiju ? '' : 'disabled'} title="${hasK && !kaijuAfk ? 'Someone is the kaiju' : ''}">PLAY KAIJU</button>`) +
-        `</div><div class="bots">` +
-        `<button type="button" data-bot="tank" ${tanks < TUNING.maxTanks ? '' : 'disabled'}>+ BOT TANK</button>` +
-        `<button type="button" data-bot="kaiju" ${hasK ? 'disabled' : ''}>+ BOT KAIJU</button></div>`;
+        `</div><div class="bots">` + (koth
+          ? `<button type="button" data-bot="kaiju" ${rows.length < 1 + TUNING.maxTanks ? '' : 'disabled'}>+ BOT KAIJU</button>`
+          : `<button type="button" data-bot="tank" ${tanks < TUNING.maxTanks ? '' : 'disabled'}>+ BOT TANK</button>` +
+            `<button type="button" data-bot="kaiju" ${hasK ? 'disabled' : ''}>+ BOT KAIJU</button>`) + `</div>`;
+      lobby.querySelector('[data-share]')?.addEventListener('click', async () => {
+        const link = handlers.shareLink?.() || location.href;
+        let ok = true;
+        try { await navigator.clipboard.writeText(link); } catch { ok = false; }
+        (window.__kqShared ||= []).push(link);
+        copied = ok ? true : link; lobbySig = ''; setTimeout(() => { copied = false; lobbySig = ''; }, ok ? 2000 : 15000);
+      });
       wireModes(lobby);
       lobby.querySelectorAll('[data-bot]').forEach(bt => bt.addEventListener('click', () => handlers.addBot?.(bt.dataset.bot)));
       lobby.querySelectorAll('[data-kick]').forEach(bt => bt.addEventListener('click', () => handlers.kick?.(bt.dataset.kick)));
@@ -266,7 +314,7 @@ export function createHud({ mobile }) {
         if (!t) { t = el(`<div class="kq-tag"></div>`); tags.set(id, t); }
         const text = (p.name || 'Player') + (id === myId ? ' (you)' : '');
         if (t.textContent !== text) t.textContent = text;
-        t.style.setProperty('--c', p.role === 'kaiju' ? '#7dff8a' : colourHex(p.slot));
+        t.style.setProperty('--c', p.role === 'kaiju' ? kaijuHex(p.slot) : colourHex(p.slot));
         t.hidden = false; t.style.left = `${s.sx}px`; t.style.top = `${s.sy}px`;
         seen.add(id);
       });
@@ -275,21 +323,44 @@ export function createHud({ mobile }) {
     update({ state, me, myId, camera, units }) {
       if (!state || !me) return;
       const playing = state.phase === 'playing';
-      // top bar
+      // top bar: health, clock, and the mode's scoreboard
       top.hidden = !(playing || state.phase === 'ended');
+      const pts = (v) => Math.floor(v || 0);
+      let lead = null;   // King of the Hill leader
+      if (state.mode === 'koth') state.players.forEach((p, id) => { if (!lead || p.score > lead.p.score) lead = { p, id }; });
       if (!top.hidden) {
-        const frac = state.kaijuMaxHp ? state.kaijuHp / state.kaijuMaxHp : 1;
+        let hpP = me.role === 'kaiju' ? me : null;
+        if (!hpP) state.players.forEach(p => { if (p.role === 'kaiju' && !hpP) hpP = p; });
+        const frac = hpP?.maxHp ? hpP.hp / hpP.maxHp : 0;
         top.querySelector('.hp i').style.width = `${Math.max(0, frac) * 100}%`;
-        top.querySelector('.hp b').textContent = `KAIJU ${Math.ceil(state.kaijuHp)} / ${state.kaijuMaxHp}`;
+        top.querySelector('.hp b').textContent = !hpP ? '' : hpP.alive
+          ? `${hpP === me ? 'YOU' : 'KAIJU'} ${Math.ceil(hpP.hp)} / ${hpP.maxHp}` : `${hpP === me ? 'YOU' : 'KAIJU'} DOWN ${Math.ceil(hpP.respawnIn)}s`;
         top.querySelector('.clock').textContent = playing ? fmt(state.clock) : 'END';
-        top.querySelector('.score').textContent = `★ ${state.kaijuScore}`;
+        const bonus = state.bonus && state.bonusIn > 0 ? ` ×${TUNING.crateFavor}` : '';
+        top.querySelector('.score').innerHTML = state.mode === 'koth'
+          ? `★ ${pts(me.score)} <small>you</small>` + (lead && lead.id !== myId ? ` · ${esc(lead.p.name)} ${pts(lead.p.score)}` : lead ? ' · leading' : '')
+          : state.mode === 'evac'
+          ? `<span class="k">${state.stomped} stomped</span> · <span class="t">${state.evacuated} out</span> <small>of ${TUNING.evacPool}</small>`
+          : `<span class="k">KAIJU ${pts(state.kaijuScore)}${state.bonus === 'kaiju' ? bonus : ''}</span> · ` +
+            `<span class="t">TANKS ${pts(state.tankScore)}${state.bonus === 'tanks' ? bonus : ''}</span>`;
         top.querySelector('.extra').textContent = !playing ? ''
           : state.mode === 'koth' ? `HILL MOVES ${Math.max(0, Math.ceil(state.hillIn))}s`
-          : state.mode === 'evac' ? `EVACUATED ${state.evacuated}/${TUNING.evacGoal}` : '';
+          : state.mode === 'race' ? [state.bonusIn > 0 ? `${state.bonus === 'kaiju' ? 'KAIJU' : 'TANK'} BONUS ${Math.ceil(state.bonusIn)}s` : '',
+                                     state.healIn > 0 ? `REPAIR ×${TUNING.deathRepairBoost} ${Math.ceil(state.healIn)}s` : ''].filter(Boolean).join(' · ')
+          : '';
       }
-      // gold arrow to the hill when it's off screen (everyone)
+      // Evacuation: one bar split three ways (stomped · still in the city · escaped)
+      split.hidden = !(state.mode === 'evac' && (playing || state.phase === 'ended'));
+      if (!split.hidden) {
+        const P = TUNING.evacPool;
+        split.querySelector('.k').style.width = `${state.stomped / P * 100}%`;
+        split.querySelector('.t').style.width = `${state.evacuated / P * 100}%`;
+      }
+      // gold arrows to the hill / the crate when they're off screen (everyone)
       if (playing && state.mode === 'koth') pointEdge(hillArrow, camera, state.hillX, 0, state.hillZ);
       else hillArrow.hidden = true;
+      if (playing && state.mode === 'race' && state.crateOn) pointEdge(crateArrow, camera, state.crateX, 0.3, state.crateZ);
+      else crateArrow.hidden = true;
 
       this.updateLobby(state, me, myId);
       this.updateTags(state, myId, camera, units);
@@ -298,38 +369,42 @@ export function createHud({ mobile }) {
       let b = '', big = false;
       if (state.phase === 'countdown') {
         b = String(Math.max(1, Math.ceil(state.clock))); big = true;
-      } else if (playing && me.role === 'tank' && !me.alive) {
-        b = `Crushed!<small>Back in action in ${Math.max(1, Math.ceil(me.respawnIn))}</small>`;
+      } else if (playing && !me.alive) {
+        b = `${me.role === 'tank' ? 'Crushed!' : 'Down!'}<small>Back in action in ${Math.max(1, Math.ceil(me.respawnIn))}</small>`;
       } else if (playing && state.clock > T0() - 2.5) {
         const k = keyNames();
         const kaiju = me.role === 'kaiju';
+        const half = Math.floor(TUNING.evacPool / 2) + 1;
         b = state.mode === 'koth'
-          ? (kaiju ? `KING OF THE HILL<small>Buildings inside the gold ring score ×${TUNING.hillMultiplier} · it moves every ${TUNING.hillMoveSeconds}s</small>`
-                   : `KING OF THE HILL<small>The kaiju scores ×${TUNING.hillMultiplier} inside the gold ring · defend it · ${k.block} roadblock</small>`)
+          ? `KING OF THE HILL<small>Everyone's a kaiju · smash buildings (×${TUNING.hillMultiplier} in the gold ring) and each other · top score wins</small>`
           : state.mode === 'evac'
-          ? (kaiju ? `EVACUATION<small>Stomp fleeing civilians before ${TUNING.evacGoal} reach the green exits</small>`
-                   : `EVACUATION<small>Get ${TUNING.evacGoal} civilians to the green exits · keep the kaiju off them</small>`)
-          : kaiju ? `SMASH!<small>${k.smash} next to a building or roadblock · ${k.boost} boost · walk into tanks to crush them</small>`
-                  : `HUNT THE KAIJU<small>Turret fires on its own when it can see the kaiju · ${k.block} roadblock · park by damaged buildings to repair</small>`;
+          ? (kaiju ? `EVACUATION<small>Stomp ${half} of the ${TUNING.evacPool} civilians before they reach the green exits</small>`
+                   : `EVACUATION<small>Get ${half} of the ${TUNING.evacPool} civilians to the green exits · wall off the kaiju with roadblocks</small>`)
+          : kaiju ? `SMASH!<small>Destroy buildings and crush tanks for points · ${k.smash} smash · ${k.boost} boost · grab the crate</small>`
+                  : `HOLD THE CITY<small>Repair damaged buildings and gun down the kaiju for points · ${k.block} roadblock · grab the crate</small>`;
       }
       banner.hidden = !b; banner.innerHTML = b; banner.classList.toggle('big', big);
 
       // end screen
       end.hidden = state.phase !== 'ended';
       if (!end.hidden) {
-        const kaijuWon = state.winner === 'kaiju';
-        const youWon = (me.role === 'kaiju') === kaijuWon;
-        const why = kaijuWon ? 'The kaiju outlasted the clock.'
-          : state.mode === 'evac' && state.evacuated >= TUNING.evacGoal ? `${state.evacuated} civilians got out.` : 'The kaiju went down.';
-        const sig = JSON.stringify([state.winner, youWon, state.kaijuScore, Math.ceil(state.clock), state.mode, state.evacuated]);
+        const w = state.winner;
+        const winName = state.mode === 'koth' && w !== 'tie' ? (state.players.get(w)?.name || 'Someone') : '';
+        const title = w === 'tie' ? 'TIE' : state.mode === 'koth' ? `${winName.toUpperCase()} WINS` : w === 'kaiju' ? 'KAIJU WINS' : 'TANKS WIN';
+        const youWon = state.mode === 'koth' ? w === myId : w !== 'tie' && (me.role === 'kaiju') === (w === 'kaiju');
+        const detail = state.mode === 'koth'
+          ? [...state.players.values()].sort((a, b) => b.score - a.score).map(p => `${esc(p.name)} ${pts(p.score)}`).join(' · ')
+          : state.mode === 'evac'
+          ? `Stomped ${state.stomped} · Evacuated ${state.evacuated} (of ${TUNING.evacPool})`
+          : `Kaiju ${pts(state.kaijuScore)} · Tanks ${pts(state.tankScore)}`;
+        const sig = JSON.stringify([w, youWon, detail, Math.ceil(state.clock), state.mode]);
         if (sig !== endSig) {
           endSig = sig;
           const card = end.querySelector('.card');
           card.innerHTML =
-            `<h2>${kaijuWon ? 'KAIJU WINS' : 'TANKS WIN'}</h2>` +
-            `<div>${youWon ? 'You won.' : 'You lost.'} ${why}</div>` +
-            `<div class="pts">★ ${state.kaijuScore} kaiju points</div>` +
-            (state.mode === 'evac' ? `<div>Evacuated ${state.evacuated} / ${TUNING.evacGoal}</div>` : '') +
+            `<h2>${esc(title)}</h2>` +
+            `<div>${w === 'tie' ? 'Dead even.' : youWon ? 'You won.' : 'You lost.'}</div>` +
+            `<div class="pts">${detail}</div>` +
             `<div>Next round in ${Math.max(0, Math.ceil(state.clock))}</div>` +
             `<div class="kq-modes-label" style="margin-top:14px">NEXT ROUND'S MODE</div>` + modeBar(state.mode).replace('kq-modes"', 'kq-modes" style="margin-top:0"');
           wireModes(card);
@@ -359,7 +434,7 @@ export function createHud({ mobile }) {
       let kaijuUnit = null, kaijuState = null;
       state.players.forEach((p, id) => { if (p.role === 'kaiju') { kaijuState = p; kaijuUnit = units.get(id); } });
       edge.hidden = true;
-      if (me.role === 'tank' && kaijuUnit && state.phase !== 'ended') {
+      if (me.role === 'tank' && kaijuUnit && kaijuState.alive && state.phase !== 'ended') {
         const k = kaijuUnit.display;
         const p = project(camera, k.x, 0.8, k.z);
         if (!p.on) {

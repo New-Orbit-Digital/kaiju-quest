@@ -228,3 +228,28 @@ export function createExits(scene, exits, city) {
   g.visible = false; scene.add(g);
   return { sync(state) { g.visible = state?.mode === 'evac' && (state.phase === 'playing' || state.phase === 'countdown'); } };
 }
+
+// ── Points race bonus crate: a gold-striped box that bobs and spins ──
+export function createCrate(scene) {
+  const g = new THREE.Group();
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42),
+    new THREE.MeshStandardMaterial({ color: 0x9a6a3a, roughness: 0.8 }));
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.1, 0.44), new THREE.MeshBasicMaterial({ color: 0xf5b82e }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.55, 32),
+    new THREE.MeshBasicMaterial({ color: 0xf5b82e, transparent: true, opacity: 0.7, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03;
+  const lift = new THREE.Group(); lift.add(box, band); box.castShadow = true;
+  g.add(lift, ring); g.visible = false; scene.add(g);
+  let t = 0;
+  return {
+    sync(state, dt) {
+      g.visible = !!state?.crateOn && state.phase === 'playing';
+      if (!g.visible) return;
+      t += dt;
+      g.position.set(state.crateX, 0, state.crateZ);
+      lift.position.y = 0.3 + Math.sin(t * 3) * 0.06;
+      lift.rotation.y = t * 1.2;
+      ring.material.opacity = 0.45 + 0.3 * Math.abs(Math.sin(t * 4));
+    },
+  };
+}

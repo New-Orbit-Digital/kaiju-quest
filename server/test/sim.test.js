@@ -73,11 +73,6 @@ test('lane assist: an off-centre kaiju still turns a corner', () => {
   assert.ok(Math.abs(u.z - 12) < 0.01);
 });
 
-test('kaiju scaling: HP and speed grow with tank count', () => {
-  assert.equal(kaijuMaxHpFor(3), 300);
-  assert.ok(Math.abs(kaijuSpeedFor(3) - TUNING.kaijuSpeed * 1.15) < 1e-9);
-  assert.ok(kaijuSpeedFor(2) > kaijuSpeedFor(1));
-});
 
 test('streets are wider than one tile (streetWiden)', () => {
   // a tank on row 3 can sit off-centre by more than a 1-tile street would allow

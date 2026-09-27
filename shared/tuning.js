@@ -19,7 +19,8 @@ export const TUNING = {
   //  Ranges are measured centre-to-centre in tiles. A street is 1 tile.
   // ───────────────────────────────────────────────────────────────
 
-  // Kaiju SMASH (SPACE) — hits a building. Damage to buildings is permanent.
+  // Kaiju SMASH (SPACE / phone SMASH) — hits a building, a roadblock, or (King of
+  // the Hill) another kaiju. Damage to buildings stays until a tank repairs it.
   strikeDamage:       10,    // building HP removed per smash
   strikeRange:        1,     // how far the kaiju can reach a building, tiles
                              // (1 = the building right beside it, 1.5 = diagonals too,
@@ -38,11 +39,9 @@ export const TUNING = {
                              // (false = shoot through everything, the old way)
 
   // ───────────────────────────────────────────────────────────────
-  //  KAIJU
+  //  KAIJU   (health, speed-up, respawn time: see SCALING below)
   // ───────────────────────────────────────────────────────────────
-  kaijuSpeed:         3,     // walking speed, tiles/sec (with no tanks in the game)
-  kaijuSpeedPerTank:  0.05,  // +5% speed for each tank player (0.10 = +10%)
-  kaijuHpPerTank:     100,   // kaiju health = this × number of tanks (no regen)
+  kaijuSpeed:         3,     // walking speed, tiles/sec (before SCALING)
 
   // Kaiju BOOST (SHIFT / controller RB): a charge that surges to full speed
   // quickly, then eases back to normal walking speed by the end.
@@ -63,7 +62,7 @@ export const TUNING = {
 
   // Repair — a tank near a damaged building fixes it (not destroyed ones).
   repairRange:        1.5,   // tiles from the tank to the building
-  repairPerSecond:    4,     // building HP restored per second, per tank
+  repairPerSecond:    4,     // building HP restored per second, per tank (× SCALING repairRate)
 
   // Roadblocks (SPACE / controller A / phone BLOCK button) — dropped behind the tank.
   // They only block the kaiju; tanks and civilians go through.
@@ -71,58 +70,96 @@ export const TUNING = {
   roadblockHits:      2,     // kaiju smashes needed to break one
   roadblockMaxPerTank: 3,    // dropping another removes that tank's oldest
 
-  // Getting crushed
-  tankRespawnSeconds: 3,     // seconds until a crushed tank comes back
+  // Getting crushed (respawn time: see SCALING)
   respawnMinDistance: 12,    // respawn at least this many tiles from the kaiju
                              // (also always outside the kaiju's view)
 
   tankLength:         0.8,   // how big a tank is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
-  //  BUILDINGS & POINTS  (points go to the kaiju)
+  //  POINTS RACE  (the main mode: kaiju destruction points vs tank points)
+  //  Highest score at the buzzer wins. The kaiju respawns when killed.
   // ───────────────────────────────────────────────────────────────
   buildingHp:     { house: 20, commercial: 40, industrial: 40, tower: 80 },
-  buildingPoints: { house: 10, commercial: 25, industrial: 25, tower: 60 },
-  pointsTankKill:     50,    // kaiju walks into a tank
+  buildingPoints: { house: 10, commercial: 25, industrial: 25, tower: 60 },  // kaiju, per building destroyed
+  repairPoints:       1,     // tanks: points per building HP repaired
+  // (points for crushing a tank / killing the kaiju: see SCALING)
+
+  // When the kaiju goes down
+  deathRepairBoost:   2,     // tanks repair × this for a while after killing the kaiju
+  deathRepairSeconds: 10,    // … for this long
+
+  // Bonus crate: one at a time, on the street, drifting toward the kaiju
+  // (speed in SCALING). Whoever grabs it tilts the scoring their way.
+  crateFirstSeconds:  25,    // first crate appears this long into the round
+  crateRespawnSeconds: 40,   // next crate appears this long after one is grabbed
+  crateBonusSeconds:  20,    // how long the tilt lasts
+  crateFavor:         2,     // grabbing side scores × this …
+  crateOppose:        0.5,   // … and the other side × this
+  crateMinDistance:   6,     // spawns at least this far from the kaiju and every tank
+
+  // ───────────────────────────────────────────────────────────────
+  //  SCALING  — one column per number of tank players.
+  //  Read down a column to see a whole 1-vs-N setup. Edit freely.
+  //                         tanks: 1     2     3     4     5     6
+  // ───────────────────────────────────────────────────────────────
+  scaling: {
+    kaijuHp:            [  150,  260,  370,  480,  600,  720 ], // kaiju health (no regen)
+    kaijuSpeed:         [ 1.00, 1.05, 1.10, 1.15, 1.20, 1.25 ], // × kaijuSpeed
+    kaijuRespawn:       [   10,   10,   10,   10,   10,   10 ], // seconds out after being killed
+    kaijuKillPoints:    [  120,  120,  120,  120,  120,  120 ], // tanks score this for a kill
+    repairRate:         [  1.5,  1.2,  1.0, 0.85,  0.7,  0.6 ], // × repairPerSecond, each tank
+    tankRespawn:        [    3,  3.5,    4,  4.5,    5,    6 ], // seconds out after being crushed
+    tankCrushPoints:    [  100,   60,   45,   35,   30,   25 ], // kaiju scores this per tank crushed
+    crateDrift:         [    0,  0.2,  0.4,  0.6,  0.8,  1.0 ], // crate drifts to the kaiju, tiles/sec
+  },
 
   // ───────────────────────────────────────────────────────────────
   //  GAME MODES  (picked in the lobby or on the end screen)
-  //  'ffa' = Free for all · 'koth' = King of the Hill (beta) · 'evac' = Evacuation (beta)
+  //  'race' = Points race · 'koth' = King of the Hill (beta) · 'evac' = Evacuation (beta)
   // ───────────────────────────────────────────────────────────────
-  defaultMode:        'ffa',
+  defaultMode:        'race',
 
-  // King of the Hill (beta): a zone that jumps around the city.
-  // Buildings the kaiju destroys inside it are worth more.
+  // King of the Hill (beta): EVERYONE is a kaiju (colour-tinted), points race.
+  // A zone jumps around the city; buildings destroyed inside it score more.
   hillRadius:         3,     // size of the hill, tiles from its centre
   hillMoveSeconds:    15,    // the hill moves to a new spot every N seconds
   hillMultiplier:     3,     // smash points × this inside the hill
   hillMinBuildings:   5,     // a new hill spot needs at least this many standing buildings
+  kothHp:             100,   // each kaiju's health
+  kothHitDamage:      25,    // a smash on another kaiju takes this much
+  kothHitRange:       1.6,   // how close another kaiju must be to smash it, tiles
+  kothKillPoints:     50,    // points for knocking out another kaiju
+  kothRespawn:        5,     // seconds out after being knocked out
 
-  // Evacuation (beta): civilians leave buildings and walk to the exits
-  // (the middle of each map edge). Tanks win when enough get out.
-  evacGoal:           40,    // civilians that must escape for the tanks to win
-  civilianSpawnSeconds: 4,   // a new civilian every N seconds
+  // Evacuation (beta): a fixed crowd of civilians walks to the exits (the middle
+  // of each map edge). Stomped vs escaped: first side past half the crowd wins.
+  evacPool:           60,    // civilians in the whole round
+  civilianSpawnSeconds: 3,   // a new civilian every N seconds (until the crowd runs out)
   civilianMaxAlive:   10,    // most civilians on the streets at once
   civilianSpeed:      1.3,   // walking speed, tiles/sec
   civilianPanicRange: 4,     // they re-route away from the kaiju inside this range
-  pointsCivilian:     15,    // kaiju walks into a civilian
+  evacRoadblockHits:  10,    // roadblocks are sturdier here (5× normal) …
+  evacRoadblockCap:   0,     // … and unlimited (0 = no cap per tank)
   civilianHeight:     0.3,   // how big a civilian is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
   //  MATCH
   // ───────────────────────────────────────────────────────────────
-  matchSeconds:       300,   // round length (kaiju wins if still alive at 0)
+  matchSeconds:       300,   // round length
   countdownSeconds:   3,      // "3-2-1" before a round
   endScreenSeconds:   12,    // results screen, then the next round starts
   maxTanks:           6,     // tank seats per game
+  roomCodeLength:     4,     // private room codes, letters
   afkSeconds:         60,    // lobby: no key press / stick move for this long = AFK.
                              // AFK players don't block the start, and anyone can take
                              // an AFK kaiju's seat.
 
   // ───────────────────────────────────────────────────────────────
-  //  PHONES  (phones always play a tank)
+  //  PHONES  (phones can play the kaiju or a tank)
   // ───────────────────────────────────────────────────────────────
-  mobileMarkers:      true,  // arrows over the kaiju + other tanks (phones only)
+  mobileMarkers:      true,  // arrows over the kaiju + other tanks (phone tanks only)
+  viewTilesMobileKaiju: 15,  // ZOOM for a kaiju on a phone
   joystickSnap:       true,  // joystick snaps to the 4 street directions
   joystickDeadzone:   0.25,  // share of the joystick that does nothing (0–1)
   mobileShadows:      false, // shadows look nicer but cost a lot on phones
@@ -167,8 +204,16 @@ export const TUNING = {
 };
 
 // Derived helpers (don't edit — change the values above instead)
+// SCALING value for this many tanks (1…6; 0 tanks uses the 1-tank column).
+export function scaled(key, tankCount) {
+  const col = TUNING.scaling[key];
+  return col[Math.min(col.length, Math.max(1, tankCount)) - 1];
+}
 export function kaijuSpeedFor(tankCount) {
-  return TUNING.kaijuSpeed * (1 + TUNING.kaijuSpeedPerTank * tankCount);
+  return TUNING.kaijuSpeed * scaled('kaijuSpeed', tankCount);
+}
+export function kaijuMaxHpFor(tankCount) {
+  return scaled('kaijuHp', tankCount);
 }
 // Kaiju boost speed multiplier, t seconds into a boost: up to boostPeak over
 // boostRampSeconds, then easing back to × 1 at boostSeconds.
@@ -178,7 +223,4 @@ export function boostMultiplierAt(t) {
   if (t < ramp) return 1 + (peak - 1) * (t / ramp);
   const f = (t - ramp) / Math.max(1e-6, len - ramp);   // 0 → 1
   return 1 + (peak - 1) * (1 - f) * (1 - f * 0.5);      // eases out, faster at the start
-}
-export function kaijuMaxHpFor(tankCount) {
-  return TUNING.kaijuHpPerTank * Math.max(1, tankCount);
 }

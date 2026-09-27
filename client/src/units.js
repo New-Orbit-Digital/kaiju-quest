@@ -36,6 +36,10 @@ const MODELS = {
 
 export const TANK_COLOURS = [0x4f7cff, 0xf5a524, 0xe5484d, 0xa35cf0, 0x2fbf71, 0xffffff];
 const CIVILIAN_COLOURS = [0xe8d44d, 0xe07a5f, 0x81b29a, 0xf2cc8f, 0x9d8df1, 0x5fa8d3, 0xf28482, 0xcdb4db];
+// King of the Hill: each kaiju gets its own tint (slot 0…6). The single kaiju
+// in the other modes has slot -1 and keeps its natural green.
+export const KAIJU_COLOURS = [0x5fd35f, 0x4f7cff, 0xf5a524, 0xe5484d, 0xa35cf0, 0x2fd4c8, 0xf0f0f0];
+export const kaijuHex = (slot) => slot < 0 ? '#7dff8a' : '#' + KAIJU_COLOURS[slot % KAIJU_COLOURS.length].toString(16).padStart(6, '0');
 export const colourHex = (slot) => '#' + TANK_COLOURS[slot % TANK_COLOURS.length].toString(16).padStart(6, '0');
 
 const sources = {};
@@ -64,7 +68,8 @@ function placeholder(role, colour) {
 
 // A drawn unit: `object` is positioned/rotated by game state.
 export function createUnit(role, slot, isMine) {
-  const colour = role === 'kaiju' ? 0x3e9c4a
+  const tint = role === 'kaiju' && slot >= 0 ? new THREE.Color(KAIJU_COLOURS[slot % KAIJU_COLOURS.length]) : null;
+  const colour = role === 'kaiju' ? (tint ? tint.getHex() : 0x3e9c4a)
     : role === 'civilian' ? CIVILIAN_COLOURS[Math.abs(slot) % CIVILIAN_COLOURS.length]
     : TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length];
   const outer = new THREE.Group();
@@ -109,6 +114,7 @@ export function createUnit(role, slot, isMine) {
       }
       if (m.flash) {
         o.material = o.material.clone();
+        if (tint) o.material.color.lerp(tint, 0.6);
         o.material.emissive = new THREE.Color(0xff2a1a);
         o.material.emissiveIntensity = 0;
         flashMats.push(o.material);
@@ -126,7 +132,7 @@ export function createUnit(role, slot, isMine) {
     const big = role === 'kaiju';
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(big ? 0.55 : 0.36, big ? 0.68 : 0.46, 40),
-      new THREE.MeshBasicMaterial({ color: big ? 0x7dff8a : colour, transparent: true, opacity: 0.85, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: big ? (tint ? colour : 0x7dff8a) : colour, transparent: true, opacity: 0.85, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.04;
     outer.add(ring);

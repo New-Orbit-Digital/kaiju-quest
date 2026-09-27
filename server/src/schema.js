@@ -18,7 +18,7 @@ export const Player = schema({
   ready: t.boolean(),   // lobby ready-up
   afk: t.boolean(),     // no input for TUNING.afkSeconds
   role: t.string(),     // 'kaiju' | 'tank'
-  slot: t.number(),     // tank colour slot 0..n (kaiju = -1)
+  slot: t.number(),     // colour slot 0..n (the single kaiju in Points race / Evacuation = -1)
   mobile: t.boolean(),
   x: t.number(), z: t.number(), rot: t.number(),
   moving: t.boolean(),
@@ -30,22 +30,30 @@ export const Player = schema({
   blockIn: t.number(),  // roadblock cooldown remaining (tanks)
   bot: t.boolean(),     // computer-controlled
   repairing: t.boolean(), // tank is fixing a building right now (drives the repair sound)
+  hp: t.number(), maxHp: t.number(), // kaiju health
+  score: t.number(),    // personal points (King of the Hill ranks by this)
 }, 'Player');
 
 export const MatchState = schema({
   phase: t.string(),    // lobby | countdown | playing | ended
   clock: t.number(),    // seconds left in the current phase
   winner: t.string(),
-  kaijuHp: t.number(),
-  kaijuMaxHp: t.number(),
   kaijuScore: t.number(),
+  tankScore: t.number(),
   kaijuSpeed: t.number(),
   players: t.map(Player),
   buildingHp: t.array('number'),
   roadblocks: t.map(Roadblock),
-  mode: t.string(),     // 'ffa' | 'koth' | 'evac'
+  code: t.string(),     // room code for share links (every room has one)
+  private: t.boolean(), // private rooms never get random players
+  mode: t.string(),     // 'race' | 'koth' | 'evac'
   hillX: t.number(), hillZ: t.number(), // King of the Hill centre
   hillIn: t.number(),   // seconds until the hill moves
   evacuated: t.number(),// Evacuation: civilians out so far
+  stomped: t.number(),  // Evacuation: civilians the kaiju got
+  bonus: t.string(),    // crate tilt: '' | 'kaiju' | 'tanks'
+  bonusIn: t.number(),  // seconds of tilt left
+  healIn: t.number(),   // seconds of faster repair left (after a kaiju kill)
+  crateOn: t.boolean(), crateX: t.number(), crateZ: t.number(), crateIn: t.number(),
   civilians: t.map(Civilian),
 }, 'MatchState');

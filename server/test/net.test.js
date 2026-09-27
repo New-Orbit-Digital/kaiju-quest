@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@colyseus/sdk';
 import { startServer } from '../src/index.js';
-import { TUNING as T, kaijuSpeedFor } from '../../shared/tuning.js';
+import { TUNING as T, kaijuSpeedFor, scaled } from '../../shared/tuning.js';
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -37,7 +37,7 @@ test('two clients over the network: roles, sync, countdown, combat events', asyn
     b.send('ready', { ready: true });
     await wait(T.countdownSeconds * 1000 + 400);
     assert.equal(b.state.phase, 'playing');
-    assert.equal(b.state.kaijuHp, T.kaijuHpPerTank);
+    assert.equal(b.state.players.get(a.sessionId).hp, scaled('kaijuHp', 1));
 
     // kaiju walks east along row 12, then strikes whatever building is beside it
     const kx0 = a.state.players.get(a.sessionId).x;
@@ -53,6 +53,27 @@ test('two clients over the network: roles, sync, countdown, combat events', asyn
     await wait(150);
     assert.ok(Number.isFinite(a.state.players.get(b.sessionId).z));
     await a.leave(); await b.leave();
+
+    // room codes: a private room is found by its code (share link), never by PLAY
+    const url = `ws://127.0.0.1:${port}`;
+    const host = await new Client(url).create('match', { name: 'Host', private: true });
+    await wait(150);
+    const code = host.state.code;
+    assert.match(code, new RegExp(`^[A-Z]{${T.roomCodeLength}}$`));
+    assert.equal(host.state.private, true);
+    const res = await fetch(`http://127.0.0.1:${port}/room/${code.toLowerCase()}`);
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    const { roomId } = await res.json();
+    const friend = await new Client(url).joinById(roomId, { name: 'Friend' });
+    await wait(150);
+    assert.equal(friend.state.code, code);
+    assert.equal(host.state.players.size, 2, 'friend joined the private room');
+    const stranger = await new Client(url).joinOrCreate('match', { name: 'Stranger' });
+    await wait(150);
+    assert.notEqual(stranger.state.code, code, 'PLAY never lands in a private room');
+    assert.equal(stranger.state.private, false);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/room/ZZZZ`)).status, 404);
+    await host.leave(); await friend.leave(); await stranger.leave();
   } finally {
     await server.gracefullyShutdown(false);
   }

@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import { Client } from '@colyseus/sdk';
 import { TUNING } from '../../shared/tuning.js';
 import { buildCity, fadeOccluders } from './city.js';
-import { loadUnitModels, createUnit, colourHex, TANK_COLOURS } from './units.js';
+import { loadUnitModels, createUnit, colourHex, kaijuHex, TANK_COLOURS } from './units.js';
 import { moveVector, onInputChange, pollGamepad, usingGamepad, keyNames } from './input.js';
 import { createLocalRoom } from './localroom.js';
-import { initFx, createBuildingDamage, createRoadblocks, createHill, createExits } from './fx.js';
+import { initFx, createBuildingDamage, createRoadblocks, createHill, createExits, createCrate } from './fx.js';
 import { initAudio, play as sfx, loop as sfxLoop, setListener, toggleMute, isMuted } from './audio.js';
 import { EXITS } from '../../shared/map.js';
-import { MODE_NAMES } from '../../shared/game.js';
+import { MODE_NAMES, BETA_MODES } from '../../shared/game.js';
 import { createHud } from './hud.js';
 import { createTouchControls } from './touch.js';
 
@@ -25,6 +25,10 @@ const MOBILE = !params.has('desktop') && (params.has('mobile') ||
 const WS = location.protocol === 'https:' ? 'wss' : 'ws';
 const SERVER = params.get('server') || import.meta.env.VITE_SERVER_URL ||
   (import.meta.env.DEV ? `${WS}://${location.hostname || 'localhost'}:2567` : `${WS}://${location.host}`);
+const HTTP = SERVER.replace(/^ws/, 'http');   // same server, for the room-code lookup
+// The free Render server sleeps when idle: poke it as soon as the page opens so
+// it's awake by the time the player has typed a name.
+if (!OFFLINE) fetch(`${HTTP}/health`).catch(() => {});
 
 if (MOBILE) TUNING.shadows = TUNING.mobileShadows; // phones: cheaper rendering
 
@@ -72,9 +76,10 @@ const statusEl = document.getElementById('status');
 const setStatus = (t) => { statusEl.textContent = t; statusEl.hidden = !t; };
 const hud = createHud({ mobile: MOBILE });
 const fx = initFx(scene);
-const touch = MOBILE ? createTouchControls({ onBlock: () => room?.send('block') }) : null;
+const touch = MOBILE ? createTouchControls({ onBlock: () => room?.send('block'), onSmash: () => room?.send('action'), onBoost: () => room?.send('boost') }) : null;
 const roadblocks = createRoadblocks(scene, (slot) => TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length]);
 const hill = createHill(scene, TUNING.hillRadius);
+const crate = createCrate(scene);
 let exits = null;
 initAudio();
 hud.onMute(() => toggleMute(), isMuted());
@@ -82,7 +87,7 @@ hud.onMute(() => toggleMute(), isMuted());
 // ── Boot ───────────────────────────────────────────────────
 const units = new Map();    // sessionId → { view, display: {x,z,rot}, alive }
 const civilians = new Map(); // civilian id → { view, display }
-let room = null, city = null, wantedRole = null, roleNoticeDone = false;
+let room = null, city = null, wantedRole = null, roleNoticeDone = false, codeInUrl = false;
 let buildingObjects = new Map(), damage = null;
 
 async function boot() {
@@ -95,19 +100,36 @@ async function boot() {
   if (OFFLINE) {
     room = createLocalRoom();
   } else {
-    // Everyone enters a name first (?name= skips it). Sides are picked in the lobby;
-    // ?role=kaiju / ?role=tank still works as a starting preference. Phones are tanks.
-    const name = params.get('name') || await hud.askName();
-    const wanted = MOBILE ? 'tank' : (params.get('role') || undefined);
+    // Everyone enters a name first (?name= skips it), then picks PLAY (any public
+    // game), CREATE ROOM (private, with a code) or joins a code / share link (?room=).
+    // Sides are picked in the lobby; ?role=kaiju / ?role=tank sets a preference.
+    const wanted = params.get('role') || undefined;
     wantedRole = wanted;
-    setStatus('connecting…');
-    try {
-      room = await new Client(SERVER).joinOrCreate('match', { role: wanted, mobile: MOBILE, name });
-    } catch (e) {
-      console.error(e);
-      setStatus(/full|locked/i.test(String(e?.message)) ? 'This match is full — try again after a round ends'
-                                                        : `could not reach the game server (${SERVER})`);
-      return;
+    const client = new Client(SERVER);
+    const opts = (name) => ({ role: wanted, mobile: MOBILE, name });
+    let pickCode = (params.get('room') || '').toUpperCase(), note = '';
+    for (;;) {
+      const choice = params.get('name') && !note
+        ? { name: params.get('name'), how: pickCode ? 'code' : (params.has('create') ? 'create' : 'public'), code: pickCode }
+        : await hud.askJoin({ code: pickCode, note });
+      setStatus('connecting…');
+      try {
+        if (choice.how === 'create') room = await client.create('match', { ...opts(choice.name), private: true });
+        else if (choice.how === 'code') {
+          const r = await fetch(`${HTTP}/room/${encodeURIComponent(choice.code)}`);
+          if (r.status === 404) throw new Error('not-found');
+          room = await client.joinById((await r.json()).roomId, opts(choice.name));
+        } else room = await client.joinOrCreate('match', opts(choice.name));
+        break;
+      } catch (e) {
+        console.warn(e);
+        const msg = String(e?.message || e);
+        pickCode = choice.how === 'code' ? choice.code : '';
+        note = msg === 'not-found' ? `No game with the code ${choice.code}. Check it, or start your own.`
+          : /full|locked/i.test(msg) ? `Room ${choice.code || ''} is full. Play a public game or create your own room.`
+          : `Couldn't reach the game server (${SERVER}). Try again in a minute — it may be waking up.`;
+        setStatus('');
+      }
     }
     room.onLeave((code) => setStatus(code === 4001 ? 'You were removed from the lobby — reload to rejoin'
                                                    : 'disconnected — reload to rejoin'));
@@ -117,6 +139,7 @@ async function boot() {
       kick: (id) => room.send('kick', { id }),
       addBot: (role) => room.send('addBot', { role }),
       mode: (m) => room.send('mode', { mode: m }),
+      shareLink: () => { const u = new URL(location.href); u.search = ''; u.searchParams.set('room', room.state.code); return u.toString(); },
     });
   }
   setStatus('');
@@ -130,8 +153,9 @@ function kaijuEntry() {
   for (const [id, u] of units) if (u.role === 'kaiju') return u;
   return null;
 }
+const myRoleNow = () => room?.state?.players?.get(room.sessionId)?.role;
 function onFx(e) {
-  const k = kaijuEntry();
+  const k = (e.target && units.get(e.target)) || kaijuEntry();
   switch (e.type) {
     case 'shot': {
       if (!k) break;
@@ -150,15 +174,16 @@ function onFx(e) {
       break;
     }
     case 'strike':
-      k?.view.attack();
+      units.get(e.id)?.view.attack();
+      if (e.hitKaiju) units.get(e.hitKaiju)?.view.hit(1.5);
       if (e.bid >= 0 && city) { const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 0.7 * b.size); }
-      if (e.bid >= 0 || e.roadblock) sfx('monster-hit', 1, { x: e.x, z: e.z });   // only hits that land
+      if (e.bid >= 0 || e.roadblock || e.hitKaiju) sfx('monster-hit', 1, { x: e.x, z: e.z });   // only hits that land
       break;
     case 'destroyed':
       if (city) {
         const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 1.6 * b.size); fx.blast(b.cx, b.cz, 0.8 * b.size, 0x9a8f80);
         sfx('building-destroyed', 1, { x: b.cx, z: b.cz });
-        if (e.hill && room.state.players.get(room.sessionId)?.role === 'kaiju') hud.toast(`HILL BONUS ×${TUNING.hillMultiplier}  ★ ${e.points}`, 2);
+        if (e.hill && e.id === room.sessionId) hud.toast(`HILL BONUS ×${TUNING.hillMultiplier}  ★ ${Math.round(e.points)}`, 2);
       }
       break;
     case 'tankDown': fx.blast(e.x, e.z, 1.2); sfx('tank-dead', 1, { x: e.x, z: e.z }); break;
@@ -169,12 +194,32 @@ function onFx(e) {
     case 'roadblockDown': fx.dust(e.x, e.z, 0.7); fx.blast(e.x, e.z, 0.4, 0xd9412b); break;
     case 'civilianDown': fx.blast(e.x, e.z, 0.35, 0xc0392b); break;
     case 'escaped': fx.repair(e.x, e.z, 0.6); break;
-    case 'mode':
-      if (e.by && !OFFLINE) hud.toast(`${e.by} picked ${MODE_NAMES[e.mode]}${e.mode === 'ffa' ? '' : ' (beta)'}.`, 4);
-      if (OFFLINE) hud.toast(`Mode: ${MODE_NAMES[e.mode]}${e.mode === 'ffa' ? '' : ' (beta)'}`, 3);
+    case 'mode': {
+      const label = `${MODE_NAMES[e.mode]}${BETA_MODES.has(e.mode) ? ' (beta)' : ''}`;
+      hud.toast(e.by && !OFFLINE ? `${e.by} picked ${label}.` : `Mode: ${label}`, 4);
       break;
-    case 'end': if (e.winner === 'tanks') k?.view.die(); break;
-    case 'start': k?.view.revive(); break;
+    }
+    case 'kaijuDown': {
+      const u = units.get(e.id);
+      fx.blast(e.x, e.z, 2, 0x7dff8a);
+      sfx('building-destroyed', 1, { x: e.x, z: e.z });
+      if (e.id === room.sessionId) hud.toast(myRoleNow() === 'kaiju' && room.state.mode === 'koth' ? 'Knocked out! Back soon.' : 'Down! You\'ll be back in a few seconds.', 3);
+      u?.view.die();
+      break;
+    }
+    case 'kaijuKill':
+      hud.toast(`KAIJU DOWN · tanks +${Math.round(e.points)} · repairs ×${TUNING.deathRepairBoost} for ${TUNING.deathRepairSeconds}s`, 4);
+      break;
+    case 'kaijuUp': units.get(e.id)?.view.revive(); break;
+    case 'crateSpawn': hud.toast('A bonus crate dropped. Grab it to tilt the scoring!', 3); sfx('roadblock-placed', 0.8, { x: e.x, z: e.z }); break;
+    case 'crate': {
+      const mine = room.state.players.get(room.sessionId);
+      const ours = mine && (e.side === 'kaiju') === (mine.role === 'kaiju');
+      hud.toast(`${ours ? 'YOUR SIDE' : e.side === 'kaiju' ? 'KAIJU' : 'TANKS'} GOT THE CRATE: ×${TUNING.crateFavor} points for ${TUNING.crateBonusSeconds}s`, 4);
+      fx.blast(e.x, e.z, 0.8, 0xf5b82e); sfx('monster-hit', 1, { x: e.x, z: e.z });
+      break;
+    }
+    case 'start': for (const u of units.values()) if (u.role === 'kaiju') u.view.revive(); break;
     case 'kaijuReplaced':
       if (e.id === room.sessionId) hud.toast('You were AFK, so another player took over the kaiju. You\'re a tank now.', 8);
       break;
@@ -202,16 +247,16 @@ function syncUnits(dt) {
   room.state.players.forEach((p, id) => {
     seen.add(id);
     let u = units.get(id);
-    if (u && u.role !== p.role) { scene.remove(u.view.object); units.delete(id); u = null; } // role changed
+    if (u && (u.role !== p.role || u.slot !== p.slot)) { scene.remove(u.view.object); units.delete(id); u = null; } // role / colour changed
     if (!u) {
       const view = createUnit(p.role, p.slot, id === room.sessionId);
       scene.add(view.object);
-      u = { view, role: p.role, display: { x: p.x, z: p.z, rot: p.rot } };
+      u = { view, role: p.role, slot: p.slot, display: { x: p.x, z: p.z, rot: p.rot } };
       units.set(id, u);
     }
     u.alive = p.alive;
-    // the kaiju stands back up for every new round
-    if (p.role === 'kaiju' && u.view.dead && room.state.phase !== 'ended') u.view.revive();
+    // a kaiju lies down while it's out, and stands back up when it respawns / a round starts
+    if (p.role === 'kaiju') { if (p.alive && u.view.dead) u.view.revive(); else if (!p.alive && !u.view.dead) u.view.die(); }
     u.view.object.visible = p.role === 'kaiju' || p.alive;
     follow(u, p, dt);
     u.view.update(dt, p.moving);
@@ -237,17 +282,23 @@ function syncUnits(dt) {
 function updateSideHud(me) {
   if (!me) return;
   const roleName = me.role === 'kaiju' ? 'KAIJU' : `TANK ${me.slot + 1}`;
-  const swatch = me.role === 'tank' ? `<span style="color:${colourHex(me.slot)}">■</span> ` : '';
+  const swatch = me.role === 'tank' ? `<span style="color:${colourHex(me.slot)}">■</span> `
+    : me.slot >= 0 ? `<span style="color:${kaijuHex(me.slot)}">■</span> ` : '';
   let tanks = 0;
   room.state.players.forEach(p => { if (p.role === 'tank') tanks++; });
   const k = keyNames();
+  const mode = room.state.mode;
   const help = me.role === 'kaiju'
-    ? `${k.move} move · ${k.smash} smash the building beside you · ${k.boost} boost<br>Walk into tanks${room.state.mode === 'evac' ? ' & civilians' : ''} to crush them`
-    : `${k.move} move · turret fires on its own (not through buildings)<br>${k.block} drop roadblock<br>Drive near damaged buildings to repair them`;
+    ? `${k.move} move · ${k.smash} smash · ${k.boost} boost<br>` + (mode === 'koth'
+      ? `Smash buildings (×${TUNING.hillMultiplier} in the gold ring) and other kaiju`
+      : `Walk into tanks${mode === 'evac' ? ' & civilians' : ''} to crush them`)
+    : `${k.move} move · turret fires on its own (not through buildings)<br>${k.block} drop roadblock<br>` +
+      (mode === 'race' ? 'Repair damaged buildings and kill the kaiju for points' : 'Drive near damaged buildings to repair them');
   hudBody.innerHTML =
     `You are ${swatch}<span class="role-${me.role}">${roleName}</span><br>` +
-    `Mode: ${MODE_NAMES[room.state.mode] || ''}${room.state.mode && room.state.mode !== 'ffa' ? ' (beta)' : ''}<br>` +
-    `Tanks: ${tanks}/${TUNING.maxTanks} · Kaiju speed ${room.state.kaijuSpeed.toFixed(2)}<br>` +
+    `Mode: ${MODE_NAMES[mode] || ''}${BETA_MODES.has(mode) ? ' (beta)' : ''}<br>` +
+    (mode === 'koth' ? `Kaiju: ${room.state.players.size}/${1 + TUNING.maxTanks}<br>`
+      : `Tanks: ${tanks}/${TUNING.maxTanks} · Kaiju speed ${room.state.kaijuSpeed.toFixed(2)}<br>`) +
     `<span class="dim">${help}` +
     (room.offline ? (usingGamepad() ? `<br>Y swap unit` : `<br>Tab swap unit · N mode · C camera · V controls`) : '') +
     `<br>M sound ${isMuted() ? 'off' : 'on'}</span>`;
@@ -322,10 +373,15 @@ function updateSound() {
   setListener(camTarget.x, camTarget.z);
   if (!st || !me) return;
   const live = st.phase !== 'ended';
-  // kaiju footsteps: everyone hears them, fading with distance
-  let kp = null; st.players.forEach(p => { if (p.role === 'kaiju') kp = p; });
-  const ku = kaijuEntry();
-  sfxLoop('monster-footsteps', kp && kp.moving && live ? 1 : 0, ku?.display);
+  // kaiju footsteps: everyone hears the nearest walking kaiju, fading with distance
+  let near = null, nearD = Infinity;
+  st.players.forEach((p, id) => {
+    if (p.role !== 'kaiju' || !p.moving || !p.alive) return;
+    const u = units.get(id); if (!u) return;
+    const d = Math.hypot(u.display.x - camTarget.x, u.display.z - camTarget.z);
+    if (d < nearD) { nearD = d; near = u; }
+  });
+  sfxLoop('monster-footsteps', near && live ? 1 : 0, near?.display);
   // your own tank's engine and repair hum (only you hear them, so they never stack)
   const myTank = me.role === 'tank' && me.alive && live;
   sfxLoop('tank-moving', myTank && me.moving ? 1 : 0);
@@ -344,13 +400,15 @@ function frame(ts) {
   damage?.sync(room?.state?.buildingHp, dt);
   roadblocks.sync(room?.state?.roadblocks);
   hill.sync(room?.state, dt);
+  crate.sync(room?.state, dt);
   exits?.sync(room?.state);
   updateSound();
 
   const me = room?.state?.players?.get(room.sessionId);
   const mine = room && units.get(room.sessionId);
   if (mine) {
-    const want = MOBILE ? TUNING.viewTilesMobile : mine.role === 'kaiju' ? TUNING.viewTilesKaiju : TUNING.viewTilesTank;
+    const want = mine.role === 'kaiju' ? (MOBILE ? TUNING.viewTilesMobileKaiju : TUNING.viewTilesKaiju)
+      : MOBILE ? TUNING.viewTilesMobile : TUNING.viewTilesTank;
     if (want !== viewTiles) { viewTiles = want; resize(); }
     const k = Math.min(1, dt * TUNING.cameraFollow);
     camTarget.x += (mine.display.x - camTarget.x) * k;
@@ -369,6 +427,11 @@ function frame(ts) {
     if (!MOBILE && wantedRole === 'kaiju' && me.role === 'tank') {
       hud.toast(`Someone is already the kaiju, so you're a tank. Use PLAY KAIJU in the lobby if the seat frees up.`, 9);
     }
+  }
+  // put the room code in the address bar once known, so a reload or a copied URL rejoins
+  if (room && !OFFLINE && !codeInUrl && room.state?.code) {
+    codeInUrl = true;
+    try { const u = new URL(location.href); u.searchParams.set('room', room.state.code); u.searchParams.delete('create'); u.searchParams.delete('name'); history.replaceState(null, '', u); } catch {}
   }
   if (me) {
     updateSideHud(me);
