@@ -76,7 +76,18 @@ const CSS = `
   font: 700 12px/1 system-ui, sans-serif; color: #fff; padding: 3px 6px; border-radius: 4px; background: rgba(10,14,22,.72);
   border-bottom: 2px solid var(--c); text-shadow: 0 1px 2px #000; }
 .kq-mobile .kq-tag { font-size: 11px; }
-.kq-mobile #kq-lobby { top: auto; bottom: 12px; right: 50%; transform: translateX(50%); max-height: 60%; }
+/* phones: keep overlays at the top, clear of the joystick and BOOST/BLOCK buttons */
+.kq-mobile #kq-lobby { top: calc(8px + env(safe-area-inset-top, 0px)); bottom: auto; right: 50%; transform: translateX(50%);
+  max-height: 58%; padding: 10px 12px; }
+.kq-mobile #kq-lobby ul { gap: 4px; margin-bottom: 8px; }
+.kq-mobile #kq-lobby li { padding: 4px 6px; }
+.kq-mobile #kq-lobby .acts button { padding: 9px 8px; font-size: 13px; }
+.kq-mobile #kq-pick { place-items: start center; padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
+.kq-mobile #kq-pick .card { padding: 14px 18px; }
+.kq-mobile #kq-toast { bottom: auto; top: calc(64px + env(safe-area-inset-top, 0px)); }
+#kq-lobby .bots { display: flex; gap: 8px; margin-top: 8px; }
+#kq-lobby .bots button { flex: 1; border: 1px dashed #56627a; background: transparent; color: #cfd6e0; border-radius: 6px;
+  padding: 8px; cursor: pointer; font: 700 12px/1 system-ui, sans-serif; letter-spacing: .04em; }
 #kq-toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
   background: rgba(14,19,28,.94); color: #eef2f6; padding: 10px 16px; border-radius: 8px; border-left: 4px solid #f5b82e;
   font: 600 14px/1.4 system-ui, sans-serif; z-index: 8; max-width: calc(100% - 32px); pointer-events: none; }
@@ -160,8 +171,8 @@ export function createHud({ mobile }) {
       const rows = [];
       let hasK = false, kaijuAfk = false, tanks = 0;
       state.players.forEach((p, id) => {
-        if (p.role === 'kaiju') { hasK = true; kaijuAfk = p.afk; } else tanks++;
-        rows.push({ id, name: p.name, role: p.role, slot: p.slot, ready: p.ready, afk: p.afk, mobile: p.mobile });
+        if (p.role === 'kaiju') { hasK = true; kaijuAfk = p.afk || p.bot; } else tanks++;
+        rows.push({ id, name: p.name, role: p.role, slot: p.slot, ready: p.ready, afk: p.afk, mobile: p.mobile, bot: p.bot });
       });
       rows.sort((a, b) => (a.role === 'kaiju' ? -1 : 0) - (b.role === 'kaiju' ? -1 : 0) || a.slot - b.slot);
       const sig = JSON.stringify([state.phase, Math.ceil(state.clock), rows, myId]);
@@ -179,13 +190,16 @@ export function createHud({ mobile }) {
         const st = r.afk ? '<span class="st afk">AFK</span>' : r.ready ? '<span class="st ready">READY</span>' : '<span class="st wait">NOT READY</span>';
         const kick = r.id !== myId ? `<button class="kick" type="button" data-kick="${esc(r.id)}" title="Remove from the lobby">✕</button>` : '<span></span>';
         return `<li class="${r.id === myId ? 'me' : ''}"><span class="sw" style="background:${col}"></span>` +
-          `<span class="nm">${esc(r.name || 'Player')}<small>${r.role === 'kaiju' ? 'kaiju' : 'tank'}${r.mobile ? ' · phone' : ''}${r.id === myId ? ' · you' : ''}</small></span>${st}${kick}</li>`;
+          `<span class="nm">${esc(r.name || 'Player')}<small>${r.role === 'kaiju' ? 'kaiju' : 'tank'}${r.bot ? ' · bot' : ''}${r.mobile ? ' · phone' : ''}${r.id === myId ? ' · you' : ''}</small></span>${st}${kick}</li>`;
       }).join('') + `</ul><div class="acts">` +
         `<button class="rdy${me.ready ? ' on' : ''}" type="button" data-act="ready">${me.ready ? 'NOT READY' : 'READY'}</button>` +
         (me.mobile ? '' : me.role === 'kaiju'
           ? `<button class="swap" type="button" data-act="tank" ${canTank ? '' : 'disabled'}>PLAY TANK</button>`
           : `<button class="swap" type="button" data-act="kaiju" ${canKaiju ? '' : 'disabled'} title="${hasK && !kaijuAfk ? 'Someone is the kaiju' : ''}">PLAY KAIJU</button>`) +
-        `</div>`;
+        `</div><div class="bots">` +
+        `<button type="button" data-bot="tank" ${tanks < TUNING.maxTanks ? '' : 'disabled'}>+ BOT TANK</button>` +
+        `<button type="button" data-bot="kaiju" ${hasK ? 'disabled' : ''}>+ BOT KAIJU</button></div>`;
+      lobby.querySelectorAll('[data-bot]').forEach(bt => bt.addEventListener('click', () => handlers.addBot?.(bt.dataset.bot)));
       lobby.querySelectorAll('[data-kick]').forEach(bt => bt.addEventListener('click', () => handlers.kick?.(bt.dataset.kick)));
       lobby.querySelectorAll('[data-act]').forEach(bt => bt.addEventListener('click', () => {
         const a = bt.dataset.act;
@@ -234,8 +248,8 @@ export function createHud({ mobile }) {
       } else if (playing && me.role === 'tank' && !me.alive) {
         b = `Crushed!<small>Back in action in ${Math.max(1, Math.ceil(me.respawnIn))}</small>`;
       } else if (playing && state.clock > T0() - 2.5) {
-        b = me.role === 'kaiju' ? 'SMASH!<small>SPACE next to a building · walk into tanks and soldiers</small>'
-                                : 'HUNT THE KAIJU<small>Your turret fires on its own · SPACE to boost away</small>';
+        b = me.role === 'kaiju' ? 'SMASH!<small>SPACE next to a building or roadblock · walk into tanks and soldiers</small>'
+                                : 'HUNT THE KAIJU<small>Turret fires on its own · SPACE boost · SHIFT roadblock · park by damaged buildings to repair</small>';
       }
       banner.hidden = !b; banner.innerHTML = b; banner.classList.toggle('big', big);
 
@@ -261,7 +275,8 @@ export function createHud({ mobile }) {
         ability.classList.toggle('ready', ready);
         ability.querySelector('span').textContent = kaijuSide
           ? (ready ? 'SPACE  SMASH — ready' : 'SPACE  SMASH')
-          : (me.boosting ? 'BOOSTING' : ready ? 'SPACE  BOOST — ready' : `SPACE  BOOST  ${Math.ceil(left)}s`);
+          : (me.boosting ? 'BOOSTING' : ready ? 'SPACE  BOOST — ready' : `SPACE  BOOST  ${Math.ceil(left)}s`) +
+            (me.blockIn > 0 ? `   ·   SHIFT  BLOCK  ${Math.ceil(me.blockIn)}s` : '   ·   SHIFT  BLOCK — ready');
         ability.querySelector('.bar i').style.width = `${(1 - left / total) * 100}%`;
       }
 

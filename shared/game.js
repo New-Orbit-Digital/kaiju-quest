@@ -16,10 +16,11 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 // Plain-object factories (tests + offline sandbox). The server passes schema ones.
 export const plainMake = {
   player: () => ({ name: '', ready: false, afk: false, role: '', slot: -1, mobile: false, x: 0, z: 0, rot: 0, moving: false,
-    alive: true, respawnIn: 0, boostIn: 0, boosting: false, strikeIn: 0, soldiers: [] }),
+    alive: true, respawnIn: 0, boostIn: 0, boosting: false, strikeIn: 0, blockIn: 0, bot: false, soldiers: [] }),
+  roadblock: () => ({ x: 0, z: 0, hits: 0, slot: 0 }),
   soldier: () => ({ x: 0, z: 0, rot: 0, alive: true, firing: false }),
   state: () => ({ phase: 'lobby', clock: 0, winner: '', kaijuHp: 0, kaijuMaxHp: 0,
-    kaijuScore: 0, kaijuSpeed: 0, players: new Map(), buildingHp: [] }),
+    kaijuScore: 0, kaijuSpeed: 0, players: new Map(), buildingHp: [], roadblocks: new Map() }),
 };
 
 // Player names: printable, trimmed, max 16 characters.
@@ -54,6 +55,11 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   const maxHpOf = (b) => b.kind === 'park' ? 0 : T.buildingHp[b.kind];
   if (!state.buildingHp.length) for (const b of city.buildings) state.buildingHp.push(maxHpOf(b));
   const destroyed = (id) => city.buildings[id].kind !== 'park' && state.buildingHp[id] <= 0;
+  const rbKey = (x, z) => `${x},${z}`;
+  const blocked = (tx, tz) => state.roadblocks.has(rbKey(tx, tz));
+  const rbOrder = new Map();       // tank id → roadblock keys, oldest first
+  const blockActions = new Set();  // ids that pressed SHIFT / BLOCK since last tick
+  const repairFx = new Map();      // tank id → seconds until next repair effect
 
   const kaiju = () => { for (const p of state.players.values()) if (p.role === 'kaiju') return p; return null; };
   const tanks = () => [...state.players.values()].filter(p => p.role === 'tank');
@@ -116,7 +122,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const k = kaiju();
     if (!k) return true;
     const kid = idOf(k);
-    if (!isAfk(kid)) return false;
+    if (!k.bot && !isAfk(kid)) return false;   // bots always give up the seat to a person
     k.role = 'tank'; k.slot = freeSlot(); k.ready = false;
     placeTank(k, kid, state.phase === 'playing' ? pickRespawn() : SPAWNS.tanks[k.slot % SPAWNS.tanks.length]);
     emit('kaijuReplaced', { id: kid });
@@ -138,7 +144,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const p = make.player();
     p.name = name; p.ready = false; p.afk = false;
     p.role = role; p.mobile = mobile;
-    p.alive = true; p.respawnIn = 0; p.boostIn = 0; p.boosting = false; p.strikeIn = 0;
+    p.alive = true; p.respawnIn = 0; p.boostIn = 0; p.boosting = false; p.strikeIn = 0; p.blockIn = 0;
+    p.bot = !!opts.bot;
     if (role === 'kaiju') {
       p.slot = -1;
       placeKaiju(p);
@@ -157,6 +164,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   function leave(id) {
     state.players.delete(id);
     inputs.delete(id); trails.delete(id); timers.delete(id); actions.delete(id); lastActive.delete(id);
+    blockActions.delete(id); repairFx.delete(id);
     rescale();
   }
 
@@ -168,6 +176,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     inputs.set(id, v2);
   };
   const action = (id) => { actions.add(id); touch(id); };
+  const block = (id) => { blockActions.add(id); touch(id); };
 
   // ── Lobby ──────────────────────────────────────────────────
   function setName(id, name) {
@@ -216,13 +225,19 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   // ── Round flow ─────────────────────────────────────────────
+  function clearRoadblocks() {
+    for (const k of [...state.roadblocks.keys()]) state.roadblocks.delete(k);
+    rbOrder.clear();
+  }
+
   function resetRound() {
+    clearRoadblocks();
     for (const b of city.buildings) state.buildingHp[b.id] = maxHpOf(b);
     state.kaijuScore = 0; state.winner = '';
     for (const [id, p] of state.players) {
       if (p.role === 'kaiju') placeKaiju(p);
       else placeTank(p, id, SPAWNS.tanks[p.slot % SPAWNS.tanks.length]);
-      p.boostIn = 0; p.strikeIn = 0;
+      p.boostIn = 0; p.strikeIn = 0; p.blockIn = 0;
       timers.delete(id);
     }
     // Straight into the next round if both sides are still here; otherwise back to the lobby.
@@ -244,36 +259,97 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const fx = Math.sin(k.rot), fz = Math.cos(k.rot);
     const R = T.strikeRange, reach = Math.ceil(R) + 1;
     const cx = Math.round(k.x), cz = Math.round(k.z);
-    let best = -1, bestScore = Infinity;
+    let best = null, bestScore = Infinity;
     for (let tz = cz - reach; tz <= cz + reach; tz++) for (let tx = cx - reach; tx <= cx + reach; tx++) {
-      const id = city.owner[tz]?.[tx];
-      if (id === undefined || id < 0) continue;
-      if (city.buildings[id].kind === 'park' || state.buildingHp[id] <= 0) continue;
+      let target = null;
+      const rb = state.roadblocks.get(rbKey(tx, tz));
+      if (rb) target = { kind: 'roadblock', key: rbKey(tx, tz), rb };
+      else {
+        const id = city.owner[tz]?.[tx];
+        if (id === undefined || id < 0) continue;
+        if (city.buildings[id].kind === 'park' || state.buildingHp[id] <= 0) continue;
+        target = { kind: 'building', id };
+      }
       const dx = tx - k.x, dz = tz - k.z, d = Math.hypot(dx, dz);
       if (d > R + 0.15) continue;                    // small slack for being off-centre
       const facing = (dx * fx + dz * fz) / (d || 1);  // 1 = straight ahead
       const score = d - facing * 0.6;
-      if (score < bestScore) { bestScore = score; best = id; }
+      if (score < bestScore) { bestScore = score; best = { ...target, tx, tz }; }
     }
     return best;
   }
 
   function kaijuStrike(k, kid) {
     if (k.strikeIn > 0) return;
-    const bid = strikeTarget(k);
+    const target = strikeTarget(k);
     k.strikeIn = T.strikeCooldown;
     timer(kid).root = T.strikeRoot;
-    if (bid < 0) { emit('strike', { bid: -1, x: k.x, z: k.z }); return; }
+    if (!target) { emit('strike', { bid: -1, x: k.x, z: k.z }); return; }
+    k.rot = Math.atan2(target.tx - k.x, target.tz - k.z);   // face what's being hit
+    if (target.kind === 'roadblock') {
+      target.rb.hits -= 1;
+      emit('strike', { bid: -1, x: target.tx, z: target.tz, roadblock: true });
+      if (target.rb.hits <= 0) {
+        state.roadblocks.delete(target.key);
+        for (const list of rbOrder.values()) { const i = list.indexOf(target.key); if (i >= 0) list.splice(i, 1); }
+        emit('roadblockDown', { x: target.tx, z: target.tz });
+      }
+      return;
+    }
+    const bid = target.id;
     const hp = Math.max(0, state.buildingHp[bid] - T.strikeDamage);
     state.buildingHp[bid] = hp;
     const b = city.buildings[bid];
-    // turn to face the building being hit
-    k.rot = Math.atan2(b.cx - k.x, b.cz - k.z);
     emit('strike', { bid, hp, x: k.x, z: k.z });
     if (hp <= 0) {
       const pts = T.buildingPoints[b.kind];
       state.kaijuScore += pts;
       emit('destroyed', { bid, points: pts });
+    }
+  }
+
+  // Tank drops a roadblock on the street tile behind it (or its own tile).
+  function dropRoadblock(p, id) {
+    if (p.blockIn > 0 || !p.alive) return false;
+    const k = kaiju();
+    const bx = -Math.sin(p.rot), bz = -Math.cos(p.rot);
+    const back = Math.abs(bx) > Math.abs(bz) ? [Math.sign(bx), 0] : [0, Math.sign(bz)];
+    const here = [Math.round(p.x), Math.round(p.z)];
+    const spots = [[here[0] + back[0], here[1] + back[1]], here];
+    for (const [tx, tz] of spots) {
+      if (city.tiles[tz]?.[tx] !== '#' || state.roadblocks.has(rbKey(tx, tz))) continue;
+      if (k && Math.abs(k.x - tx) < 0.5 + T.kaijuRadius && Math.abs(k.z - tz) < 0.5 + T.kaijuRadius) continue; // not on the kaiju
+      const rb = make.roadblock();
+      rb.x = tx; rb.z = tz; rb.hits = T.roadblockHits; rb.slot = p.slot;
+      state.roadblocks.set(rbKey(tx, tz), rb);
+      const list = rbOrder.get(id) || [];
+      list.push(rbKey(tx, tz));
+      while (list.length > T.roadblockMaxPerTank) state.roadblocks.delete(list.shift());
+      rbOrder.set(id, list);
+      p.blockIn = T.roadblockCooldown;
+      emit('roadblock', { id, x: tx, z: tz });
+      return true;
+    }
+    return false;
+  }
+
+  // Tanks repair damaged (not destroyed) buildings within repairRange.
+  function repairNear(p, id, dt) {
+    const r = T.repairRange, reach = Math.ceil(r) + 1;
+    const cx = Math.round(p.x), cz = Math.round(p.z);
+    const done = new Set();
+    for (let tz = cz - reach; tz <= cz + reach; tz++) for (let tx = cx - reach; tx <= cx + reach; tx++) {
+      const bid = city.owner[tz]?.[tx];
+      if (bid === undefined || bid < 0 || done.has(bid)) continue;
+      const b = city.buildings[bid];
+      if (b.kind === 'park') continue;
+      const hp = state.buildingHp[bid], max = maxHpOf(b);
+      if (hp <= 0 || hp >= max) continue;
+      if (Math.hypot(tx - p.x, tz - p.z) > r) continue;
+      done.add(bid);
+      state.buildingHp[bid] = Math.min(max, hp + T.repairPerSecond * dt);
+      const left = (repairFx.get(id) ?? 0) - dt;
+      if (left <= 0) { emit('repair', { id, bid }); repairFx.set(id, 0.6); } else repairFx.set(id, left);
     }
   }
 
@@ -342,7 +418,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const tankList = tanks();
 
     // AFK flags (shown in the lobby; AFK players don't block the start)
-    for (const [id, p] of state.players) { const a = isAfk(id); if (p.afk !== a) p.afk = a; }
+    for (const [id, p] of state.players) { const a = !p.bot && isAfk(id); if (p.afk !== a) p.afk = a; }
 
     // Phase clock
     if (state.phase === 'lobby') {
@@ -369,9 +445,10 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
         t.root = Math.max(0, t.root - dt);
         if (live && actions.has(id)) kaijuStrike(p, id);
         const inp = t.root > 0 || state.phase === 'ended' ? null : inputs.get(id);
-        p.moving = stepUnit(city, p, inp, dt, state.kaijuSpeed, T.kaijuRadius, destroyed);
+        p.moving = stepUnit(city, p, inp, dt, state.kaijuSpeed, T.kaijuRadius, destroyed, blocked);
       } else {
         p.boostIn = Math.max(0, p.boostIn - dt);
+        p.blockIn = Math.max(0, p.blockIn - dt);
         if (!p.alive) {
           if (state.phase === 'playing' || state.phase === 'ended') {
             if ((p.respawnIn -= dt) <= 0) { placeTank(p, id, pickRespawn()); emit('respawn', { id }); }
@@ -387,10 +464,12 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
         const speed = T.tankSpeed * (p.boosting ? T.boostMultiplier : 1);
         const inp = state.phase === 'ended' ? null : inputs.get(id);
         p.moving = stepUnit(city, p, inp, dt, speed, T.tankRadius, destroyed);
+        if (live && blockActions.has(id)) dropRoadblock(p, id);
+        if (live) repairNear(p, id, dt);
         moveSoldiers(p, id, dt, k);
       }
     }
-    actions.clear();
+    actions.clear(); blockActions.clear();
     if (!live || !k) return;
 
     // Stomps: the kaiju walking into a tank or a soldier kills it.
@@ -437,6 +516,6 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   rescale();
-  return { city, join, leave, input, action, tick, destroyed, pickRespawn, teleport,
+  return { city, join, leave, input, action, block, tick, destroyed, blocked, pickRespawn, teleport, maxHpOf,
            setName, setReady, setRole, isAfk };
 }

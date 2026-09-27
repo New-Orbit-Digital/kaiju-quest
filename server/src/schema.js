@@ -5,6 +5,12 @@ export const Soldier = schema({
   alive: t.boolean(), firing: t.boolean(),
 }, 'Soldier');
 
+export const Roadblock = schema({
+  x: t.number(), z: t.number(),
+  hits: t.number(),     // smashes left
+  slot: t.number(),     // colour of the tank that dropped it
+}, 'Roadblock');
+
 export const Player = schema({
   name: t.string(),
   ready: t.boolean(),   // lobby ready-up
@@ -19,6 +25,8 @@ export const Player = schema({
   boostIn: t.number(),  // boost cooldown remaining (tanks)
   boosting: t.boolean(),
   strikeIn: t.number(), // strike cooldown remaining (kaiju)
+  blockIn: t.number(),  // roadblock cooldown remaining (tanks)
+  bot: t.boolean(),     // computer-controlled
   soldiers: t.array(Soldier),
 }, 'Player');
 
@@ -32,4 +40,5 @@ export const MatchState = schema({
   kaijuSpeed: t.number(),
   players: t.map(Player),
   buildingHp: t.array('number'),
+  roadblocks: t.map(Roadblock),
 }, 'MatchState');

@@ -4,9 +4,10 @@ import { TUNING } from './tuning.js';
 
 // Can a unit of `role` stand on tile (tx, tz)?
 // destroyed(id) → true if that building is rubble (kaiju may walk rubble, tanks may not).
-export function tileWalkable(city, role, tx, tz, destroyed = () => false) {
+// blocked(tx, tz) → true if a roadblock sits on that street tile (kaiju only).
+export function tileWalkable(city, role, tx, tz, destroyed = () => false, blocked = null) {
   if (tz < 0 || tz >= city.depth || tx < 0 || tx >= city.width) return false;
-  if (city.tiles[tz][tx] === '#') return true;
+  if (city.tiles[tz][tx] === '#') return !(role === 'kaiju' && blocked && blocked(tx, tz));
   const id = city.owner[tz][tx];
   if (id < 0) return false;
   const b = city.buildings[id];
@@ -15,19 +16,19 @@ export function tileWalkable(city, role, tx, tz, destroyed = () => false) {
 }
 
 // Is a circle-ish unit (square hitbox of half-size r) at (x, z) clear?
-export function spotClear(city, role, x, z, r, destroyed) {
+export function spotClear(city, role, x, z, r, destroyed, blocked) {
   const e = 1e-6;
   const x0 = Math.round(x - r + e), x1 = Math.round(x + r - e);
   const z0 = Math.round(z - r + e), z1 = Math.round(z + r - e);
   for (let tz = z0; tz <= z1; tz++)
     for (let tx = x0; tx <= x1; tx++)
-      if (!tileWalkable(city, role, tx, tz, destroyed)) return false;
+      if (!tileWalkable(city, role, tx, tz, destroyed, blocked)) return false;
   return true;
 }
 
 // Advance one unit by one tick.
 // unit: { role, x, z, rot }   input: { x, z } world direction, length ≤ 1
-export function stepUnit(city, unit, input, dt, speed, r, destroyed) {
+export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked) {
   let ix = Number(input?.x) || 0, iz = Number(input?.z) || 0;
   const len = Math.hypot(ix, iz);
   if (len < 0.01) return false;
@@ -46,17 +47,17 @@ export function stepUnit(city, unit, input, dt, speed, r, destroyed) {
   };
   if (Math.abs(ix) > Math.abs(iz) * 2) {
     const nz = pull(unit.z);
-    if (spotClear(city, role, unit.x, nz, r, destroyed)) unit.z = nz;
+    if (spotClear(city, role, unit.x, nz, r, destroyed, blocked)) unit.z = nz;
   } else if (Math.abs(iz) > Math.abs(ix) * 2) {
     const nx = pull(unit.x);
-    if (spotClear(city, role, nx, unit.z, r, destroyed)) unit.x = nx;
+    if (spotClear(city, role, nx, unit.z, r, destroyed, blocked)) unit.x = nx;
   }
 
   // Axis-separated move so units slide along walls.
   const nx = unit.x + ix * step;
-  if (spotClear(city, role, nx, unit.z, r, destroyed)) unit.x = nx;
+  if (spotClear(city, role, nx, unit.z, r, destroyed, blocked)) unit.x = nx;
   const nz = unit.z + iz * step;
-  if (spotClear(city, role, unit.x, nz, r, destroyed)) unit.z = nz;
+  if (spotClear(city, role, unit.x, nz, r, destroyed, blocked)) unit.z = nz;
 
   // Face the way we're trying to go (even if pressed against a wall).
   unit.rot = Math.atan2(ix, iz);

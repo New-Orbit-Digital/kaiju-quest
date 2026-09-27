@@ -13,17 +13,24 @@ const CSS = `
   width: 96px; height: 96px; border-radius: 50%; border: 0; z-index: 8; touch-action: none;
   font: 800 15px/1 system-ui, sans-serif; letter-spacing: .05em; color: #141a24; background: #7dff8a;
   box-shadow: 0 3px 10px rgba(0,0,0,.5); }
-#kq-boost[data-cooling] { background: #4a5364; color: #cfd6e0; }
+#kq-boost[data-cooling], #kq-block[data-cooling] { background: #4a5364; color: #cfd6e0; }
+#kq-block { position: fixed; right: calc(128px + env(safe-area-inset-right, 0px)); bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  width: 76px; height: 76px; border-radius: 50%; border: 0; z-index: 8; touch-action: none;
+  font: 800 13px/1 system-ui, sans-serif; letter-spacing: .04em; color: #2a1606; background: #ff9f43;
+  box-shadow: 0 3px 10px rgba(0,0,0,.5); }
+#kq-block small { display: block; font-size: 11px; margin-top: 3px; }
 #kq-boost small { display: block; font-size: 12px; margin-top: 3px; }
 `;
 
-export function createTouchControls({ onBoost }) {
+export function createTouchControls({ onBoost, onBlock }) {
   const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
   const stick = document.createElement('div'); stick.id = 'kq-stick'; stick.innerHTML = '<i></i>';
   const knob = stick.firstChild;
   const boost = document.createElement('button'); boost.id = 'kq-boost'; boost.type = 'button';
   boost.innerHTML = 'BOOST';
-  document.body.append(stick, boost);
+  const block = document.createElement('button'); block.id = 'kq-block'; block.type = 'button';
+  block.innerHTML = 'BLOCK';
+  document.body.append(stick, boost, block);
   document.body.style.touchAction = 'none';
   addEventListener('contextmenu', e => e.preventDefault());
 
@@ -45,13 +52,18 @@ export function createTouchControls({ onBoost }) {
   stick.addEventListener('pointerup', e => { if (e.pointerId === pid) release(); });
   stick.addEventListener('pointercancel', e => { if (e.pointerId === pid) release(); });
   boost.addEventListener('pointerdown', e => { e.preventDefault(); onBoost(); });
+  block.addEventListener('pointerdown', e => { e.preventDefault(); onBlock?.(); });
+  let lastBlock = '';
 
   return {
-    element: { stick, boost },
+    element: { stick, boost, block },
     update(me) {
       if (!me) return;
       const hide = me.role !== 'tank';
-      stick.hidden = hide; boost.hidden = hide;
+      stick.hidden = hide; boost.hidden = hide; block.hidden = hide;
+      const bh = me.blockIn > 0 ? `BLOCK<small>${Math.ceil(me.blockIn)}s</small>` : 'BLOCK';
+      if (bh !== lastBlock) { block.innerHTML = bh; lastBlock = bh; }
+      if (me.blockIn > 0) block.dataset.cooling = ''; else delete block.dataset.cooling;
       const cooling = me.boostIn > 0 && !me.boosting;
       const html = cooling ? `BOOST<small>${Math.ceil(me.boostIn)}s</small>` : me.boosting ? 'GO!' : 'BOOST';
       if (html !== last) { boost.innerHTML = html; last = html; }

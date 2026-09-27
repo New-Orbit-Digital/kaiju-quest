@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import { Client } from '@colyseus/sdk';
 import { TUNING } from '../../shared/tuning.js';
 import { buildCity, fadeOccluders } from './city.js';
-import { loadUnitModels, createUnit, colourHex } from './units.js';
+import { loadUnitModels, createUnit, colourHex, TANK_COLOURS } from './units.js';
 import { moveVector, onInputChange } from './input.js';
 import { createLocalRoom } from './localroom.js';
-import { initFx, createBuildingDamage } from './fx.js';
+import { initFx, createBuildingDamage, createRoadblocks } from './fx.js';
 import { createHud } from './hud.js';
 import { createTouchControls } from './touch.js';
 
@@ -69,7 +69,8 @@ const statusEl = document.getElementById('status');
 const setStatus = (t) => { statusEl.textContent = t; statusEl.hidden = !t; };
 const hud = createHud({ mobile: MOBILE });
 const fx = initFx(scene);
-const touch = MOBILE ? createTouchControls({ onBoost: () => room?.send('action') }) : null;
+const touch = MOBILE ? createTouchControls({ onBoost: () => room?.send('action'), onBlock: () => room?.send('block') }) : null;
+const roadblocks = createRoadblocks(scene, (slot) => TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length]);
 
 // ── Boot ───────────────────────────────────────────────────
 const units = new Map();    // sessionId → { view, display: {x,z,rot}, alive }
@@ -106,6 +107,7 @@ async function boot() {
       ready: (r) => room.send('ready', { ready: r }),
       role: (r) => room.send('role', { role: r }),
       kick: (id) => room.send('kick', { id }),
+      addBot: (role) => room.send('addBot', { role }),
     });
   }
   setStatus('');
@@ -141,6 +143,11 @@ function onFx(e) {
       if (city) { const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 1.6 * b.size); fx.blast(b.cx, b.cz, 0.8 * b.size, 0x9a8f80); }
       break;
     case 'tankDown': fx.blast(e.x, e.z, 1.2); break;
+    case 'repair':
+      if (city) { const b = city.buildings[e.bid]; fx.repair(b.cx, b.cz, b.size); }
+      break;
+    case 'roadblock': fx.dust(e.x, e.z, 0.4); break;
+    case 'roadblockDown': fx.dust(e.x, e.z, 0.7); fx.blast(e.x, e.z, 0.4, 0xd9412b); break;
     case 'soldierDown': fx.blast(e.x, e.z, 0.35, 0xc0392b); break;
     case 'end': if (e.winner === 'tanks') k?.view.die(); break;
     case 'start': k?.view.revive(); break;
@@ -212,7 +219,7 @@ function updateSideHud(me) {
   room.state.players.forEach(p => { if (p.role === 'tank') tanks++; });
   const help = me.role === 'kaiju'
     ? 'WASD move · SPACE smash the building beside you<br>Walk into tanks & soldiers to crush them'
-    : 'WASD move · turret fires on its own<br>SPACE boost (15s cooldown)';
+    : `WASD move · turret fires on its own<br>SPACE boost · SHIFT drop roadblock<br>Drive near damaged buildings to repair them`;
   hudBody.innerHTML =
     `You are ${swatch}<span class="role-${me.role}">${roleName}</span><br>` +
     `Tanks: ${tanks}/${TUNING.maxTanks} · Kaiju speed ${room.state.kaijuSpeed.toFixed(2)}<br>` +
@@ -241,6 +248,7 @@ function clearUnits() {
 addEventListener('keydown', (e) => {
   if (!room) return;
   if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) room.send('action'); } // smash / boost
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) room.send('block'); // tank roadblock
   if (!room.offline) return;
   // Sandbox-only keys: Tab swaps unit, C camera angle, V controls.
   if (e.code === 'Tab') {
@@ -265,6 +273,7 @@ function frame(ts) {
   syncUnits(dt);
   fx.update(dt);
   damage?.sync(room?.state?.buildingHp, dt);
+  roadblocks.sync(room?.state?.roadblocks);
 
   const me = room?.state?.players?.get(room.sessionId);
   const mine = room && units.get(room.sessionId);

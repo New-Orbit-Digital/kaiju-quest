@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createGame, plainMake, inKaijuView } from '../../shared/game.js';
 import { TUNING as T, kaijuMaxHpFor, kaijuSpeedFor } from '../../shared/tuning.js';
 import { tileWalkable } from '../../shared/sim.js';
+import { createBots } from '../../shared/bots.js';
 
 // Helper: a game with a kaiju + n tanks, already in the 'playing' phase.
 function setup(nTanks = 1, opts = {}) {
@@ -137,6 +138,58 @@ test('picking KAIJU takes the seat from an idle kaiju, not an active one', () =>
   assert.equal(g.join('P', { role: 'kaiju', mobile: true }), 'tank', 'phones never take the kaiju');
 });
 
+test('repair: a tank near a damaged building restores it; destroyed ones stay rubble', () => {
+  const { g, state, run, K, T0, place } = setup(1);
+  place(K, 24, 12);
+  const house = g.city.owner[4][1], house2 = g.city.owner[4][2];
+  state.buildingHp[house] = 5; state.buildingHp[house2] = 0;
+  place(T0, 1, 3);                       // street beside both houses
+  run(1);
+  assert.ok(Math.abs(state.buildingHp[house] - (5 + T.repairPerSecond)) < 0.3, `repaired to ${state.buildingHp[house]}`);
+  run(20);
+  assert.equal(state.buildingHp[house], T.buildingHp.house, 'capped at full HP');
+  assert.equal(state.buildingHp[house2], 0, 'destroyed buildings are not repaired');
+});
+
+test('roadblocks: drop behind the tank, block only the kaiju, 2 smashes to break, cooldown + cap', () => {
+  const { g, state, run, K, T0, place } = setup(1);
+  place(K, 24, 12);
+  place(T0, 6, 3);
+  g.input('T0', { x: 1, z: 0 }); g.tick(0.05); g.input('T0', { x: 0, z: 0 }); // face east
+  const tx = Math.round(T0.x) - 1;
+  g.block('T0'); g.tick(0.05);
+  assert.ok(state.roadblocks.has(`${tx},3`), 'dropped on the tile behind (west)');
+  assert.equal(T0.blockIn > T.roadblockCooldown - 0.2, true);
+  g.block('T0'); g.tick(0.05);
+  assert.equal(state.roadblocks.size, 1, 'cooldown');
+  // kaiju walking east along row 3 is stopped by it
+  place(K, tx - 2, 3); K.rot = Math.PI / 2;
+  g.input('K', { x: 1, z: 0 }); run(1.5); g.input('K', { x: 0, z: 0 });
+  assert.ok(K.x < tx - 0.5, `kaiju blocked at x=${K.x.toFixed(2)}`);
+  assert.equal(g.blocked(tx, 3), true);
+  // tanks drive straight through
+  const t0x = T0.x;
+  g.input('T0', { x: -1, z: 0 }); run(0.8); g.input('T0', { x: 0, z: 0 });
+  assert.ok(T0.x < tx, 'tank passed through its own roadblock');
+  // two smashes break it
+  T.strikeRange = 1.5;
+  for (let i = 0; i < T.roadblockHits; i++) { run(T.strikeCooldown + 0.05); K.rot = Math.PI / 2; g.action('K'); g.tick(0.05); }
+  T.strikeRange = 1;
+  assert.equal(state.roadblocks.size, 0, 'broken after 2 smashes');
+});
+
+test('roadblocks: a tank keeps at most roadblockMaxPerTank; round reset clears them', () => {
+  const { g, state, run, K, T0, place } = setup(1);
+  place(K, 24, 24);
+  for (let i = 0; i < T.roadblockMaxPerTank + 1; i++) {
+    place(T0, 3 + i * 3, 3); T0.rot = Math.PI / 2; T0.blockIn = 0;
+    g.block('T0'); g.tick(0.05);
+  }
+  assert.equal(state.roadblocks.size, T.roadblockMaxPerTank);
+  state.clock = 0.05; run(0.1); run(T.endScreenSeconds + 0.1);
+  assert.equal(state.roadblocks.size, 0);
+});
+
 test('strike roots the kaiju briefly', () => {
   const { g, run, K, T0, place } = setup(1);
   place(T0, 24, 24); place(K, 1, 3);
@@ -256,4 +309,32 @@ test('a tank joining mid-round adds kaiju HP and speed', () => {
   assert.ok(Math.abs(state.kaijuSpeed - kaijuSpeedFor(2)) < 1e-9);
   const t1 = state.players.get('T1');
   assert.ok(Math.hypot(t1.x - 12, t1.z - 12) >= T.respawnMinDistance, 'joins away from the kaiju');
+});
+
+test('bots: a bot kaiju smashes buildings and bot tanks close in and fire', () => {
+  const state = plainMake.state();
+  let seed = 7; const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const events = [];
+  const g = createGame({ state, rng, emit: (type, e) => events.push({ type, ...e }) });
+  const bots = createBots(g, state);
+  assert.ok(bots.add('kaiju'));
+  assert.equal(bots.add('kaiju'), null, 'only one kaiju');
+  bots.add('tank'); bots.add('tank');
+  for (let t = 0; t < 70; t += 0.05) { bots.tick(0.05); g.tick(0.05); }
+  assert.equal(state.phase, 'playing', 'bots ready up on their own');
+  const strikes = events.filter(e => e.type === 'strike' && e.bid >= 0).length;
+  const shots = events.filter(e => e.type === 'shot').length;
+  assert.ok(strikes >= 10, `bot kaiju smashed ${strikes} times`);
+  assert.ok(shots >= 5, `bot tanks fired ${shots} times`);
+  assert.ok(state.kaijuHp < state.kaijuMaxHp);
+});
+
+test('bots: a person picking KAIJU takes the seat from a bot kaiju', () => {
+  const state = plainMake.state();
+  const g = createGame({ state });
+  const bots = createBots(g, state);
+  const bk = bots.add('kaiju');
+  g.join('me', { role: 'tank', name: 'Me' });
+  assert.equal(g.setRole('me', 'kaiju'), true);
+  assert.equal(state.players.get(bk).role, 'tank');
 });

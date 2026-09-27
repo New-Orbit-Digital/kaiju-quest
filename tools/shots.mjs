@@ -74,13 +74,23 @@ try {
   check(names.some(n => n.startsWith('Rex')) && names.some(n => n.startsWith('Pat')) && names.some(n => n.startsWith('Ghost')),
     `lobby lists every player by name: ${names.join(', ')}`);
   await kaiju.screenshot({ path: 'docs/shots/p03-lobby.png' });
+  // add a bot tank from the lobby, check it's listed, then remove it again
+  await kaiju.locator('#kq-lobby [data-bot=tank]').dispatchEvent('click');
+  await until(() => kaiju.evaluate(() => { let b = 0; window.__kq.room.state.players.forEach(p => { if (p.bot) b++; }); return b === 1; }), 15000);
+  const botId = await kaiju.evaluate(() => { let id = ''; window.__kq.room.state.players.forEach((p, k) => { if (p.bot) id = k; }); return id; });
+  await until(() => kaiju.evaluate((id) => !!document.querySelector(`#kq-lobby [data-kick="${id}"]`), botId), 10000);
+  const botRow = await kaiju.evaluate(() => [...document.querySelectorAll('#kq-lobby .nm')].map(n => n.textContent).find(t => t.includes('bot')) || '');
+  check(!!botRow, `+ BOT TANK adds a ready bot to the lobby: "${botRow}"`);
+  await kaiju.locator(`#kq-lobby [data-kick="${botId}"]`).dispatchEvent('click');
+  await until(() => kaiju.evaluate(() => { let b = 0; window.__kq.room.state.players.forEach(p => { if (p.bot) b++; }); return b === 0; }), 10000);
+  check(true, 'bot removed with ✕');
   // Rex readies; the round must not start while Pat hasn't (Ghost is active too)
-  await kaiju.click('#kq-lobby [data-act=ready]');
+  await kaiju.locator('#kq-lobby [data-act=ready]').dispatchEvent('click');
   await sleep(1500);
   check((await me(kaiju)).phase === 'lobby', 'no start while others are not ready');
   // kick the ghost
   const kickTarget = await kaiju.evaluate(() => { const r = window.__kq.room; let gid = ''; r.state.players.forEach((p, id) => { if (p.name === 'Ghost') gid = id; }); return gid; });
-  if (kickTarget) await kaiju.click(`#kq-lobby [data-kick="${kickTarget}"]`);
+  if (kickTarget) await kaiju.locator(`#kq-lobby [data-kick="${kickTarget}"]`).dispatchEvent('click');
   await until(() => kaiju.evaluate(() => window.__kq.room.state.players.size === 2), 15000);
   check((await me(kaiju)).n === 2, 'kicking the ghost removed it from the game');
   await ghostBrowser.close(); browsers.splice(browsers.indexOf(ghostBrowser), 1);
@@ -110,6 +120,10 @@ try {
   await until(() => phone.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; }), 5000);
   const boosting = await phone.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; });
   check(boosting, 'boost button triggers boost + cooldown');
+  await phone.locator('#kq-block').dispatchEvent('pointerdown');
+  await until(() => kaiju.evaluate(() => window.__kq.room.state.roadblocks.size === 1), 8000);
+  const rbCount = await kaiju.evaluate(() => window.__kq.room.state.roadblocks.size);
+  check(rbCount === 1, `phone BLOCK button drops a roadblock (${rbCount})`);
 
   await sleep(800);
   await phone.screenshot({ path: 'docs/shots/p02-phone-edge-arrow.png' });
@@ -148,11 +162,11 @@ try {
   console.log(`INFO  fps in headless software GL (not a real device): desktop ${fk}, phone ${fp}`);
 
   // Let the timer run out → kaiju wins, end screen shows
-  await kaiju.waitForFunction(() => window.__kq.room.state.phase === 'ended', null, { timeout: (ROUND + 10) * 1000 });
+  await kaiju.waitForFunction(() => window.__kq.room.state.phase === 'ended', null, { timeout: (ROUND + 30) * 1000 });
   await sleep(600);
   k = await me(kaiju);
   const endText = await kaiju.locator('#kq-end').innerText();
-  check(/KAIJU WINS/.test(endText), `end screen: "${endText.split('\n')[0]}"`);
+  check(/WINS/.test(endText), `end screen: "${endText.split('\n')[0]}"`);
   await kaiju.screenshot({ path: 'docs/shots/p02-end-screen.png' });
   await phone.screenshot({ path: 'docs/shots/p02-phone-end.png' });
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);

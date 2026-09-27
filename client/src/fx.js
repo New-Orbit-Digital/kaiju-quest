@@ -37,6 +37,16 @@ export function initFx(scene) {
       }
     },
 
+    // green "+" sparks rising from a building being repaired
+    repair(x, z, size = 1) {
+      for (let i = 0; i < 4; i++) {
+        const spark = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.06),
+          new THREE.MeshBasicMaterial({ color: 0x7dff8a, transparent: true, opacity: 1, depthWrite: false }));
+        spark.position.set(x + (Math.random() - 0.5) * 0.6 * size, 0.3 + Math.random() * 0.6 * size, z + (Math.random() - 0.5) * 0.6 * size);
+        add(spark, 0.8, (t, dt) => { spark.position.y += 0.6 * dt; spark.material.opacity = t; spark.rotation.y += dt * 4; });
+      }
+    },
+
     update(dt) {
       for (let i = live.length - 1; i >= 0; i--) {
         const f = live[i];
@@ -127,6 +137,45 @@ export function createBuildingDamage(scene, city, buildingObjects) {
         inner.position.z = Math.cos(t * 70) * 0.03 * t / 0.25;
         shakes.set(id, t);
       }
+    },
+  };
+}
+
+// ── Roadblocks: striped barriers, drawn from game state ──
+const STRIPE = [0xe8e8e8, 0xd9412b];
+function makeRoadblock(colour) {
+  const g = new THREE.Group();
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x3b3b3b, roughness: 0.9 });
+  for (const sx of [-0.36, 0.36]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.28, 0.22), legMat);
+    leg.position.set(sx, 0.14, 0); leg.castShadow = true; g.add(leg);
+  }
+  for (let i = 0; i < 6; i++) {
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.06),
+      new THREE.MeshStandardMaterial({ color: STRIPE[i % 2], roughness: 0.7 }));
+    seg.position.set(-0.35 + i * 0.14, 0.26, 0); seg.castShadow = true; g.add(seg);
+  }
+  const tag = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.07), new THREE.MeshBasicMaterial({ color: colour }));
+  tag.position.set(0, 0.36, 0); g.add(tag);
+  return g;
+}
+export function createRoadblocks(scene, colourFor) {
+  const views = new Map();
+  return {
+    sync(map) {
+      const seen = new Set();
+      map?.forEach((rb, key) => {
+        seen.add(key);
+        let v = views.get(key);
+        if (!v) {
+          v = makeRoadblock(colourFor(rb.slot));
+          v.position.set(rb.x, 0, rb.z);
+          v.rotation.y = ((rb.x * 7 + rb.z * 3) % 2) ? 0 : Math.PI / 2;
+          scene.add(v); views.set(key, v);
+        }
+        v.scale.y = rb.hits <= 1 ? 0.7 : 1;   // cracked after the first smash
+      });
+      for (const [key, v] of views) if (!seen.has(key)) { scene.remove(v); views.delete(key); }
     },
   };
 }

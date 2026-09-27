@@ -31,24 +31,24 @@ export const TUNING = {
   stompReach:         0.05,  // extra reach beyond touching, tiles (0.3 = stomps from further)
 
   // Tank CANNON — fires on its own whenever the kaiju is in range.
-  tankDamage:         2,     // kaiju HP removed per shot
+  tankDamage:         5,     // kaiju HP removed per shot
   tankRange:          6,     // firing range, tiles
   tankFireInterval:   1.2,   // one shot every N seconds (lower = faster)
 
   // Soldier RIFLES — each soldier fires on its own when the kaiju is in range.
-  soldierDamage:      0.25,  // kaiju HP removed per shot (each soldier)
+  soldierDamage:      1,  // kaiju HP removed per shot (each soldier)
   soldierRange:       4,     // firing range, tiles
   soldierFireInterval: 1.0,  // one shot every N seconds, per soldier (lower = faster)
 
   // ───────────────────────────────────────────────────────────────
   //  KAIJU
   // ───────────────────────────────────────────────────────────────
-  kaijuSpeed:         3.0,   // walking speed, tiles/sec (with no tanks in the game)
+  kaijuSpeed:         2.7,   // walking speed, tiles/sec (with no tanks in the game)
   kaijuSpeedPerTank:  0.05,  // +5% speed for each tank player (0.10 = +10%)
   kaijuHpPerTank:     100,   // kaiju health = this × number of tanks (no regen)
   viewTilesKaiju:     15,    // ZOOM: tiles visible top-to-bottom (bigger = zoomed out)
 
-  kaijuLength:        3.0,   // how big the T-Rex is drawn, nose to tail (visual only)
+  kaijuLength:        2.5,   // how big the T-Rex is drawn, nose to tail (visual only)
 
   // ───────────────────────────────────────────────────────────────
   //  TANKS
@@ -60,10 +60,20 @@ export const TUNING = {
   // Boost (SPACE / phone BOOST button)
   boostMultiplier:    2.0,   // speed × this while boosting
   boostSeconds:       1.5,   // how long a boost lasts
-  boostCooldown:      15,    // seconds before boost can be used again
+  boostCooldown:      10,    // seconds before boost can be used again
+
+  // Repair — a tank near a damaged building fixes it (not destroyed ones).
+  repairRange:        1.5,   // tiles from the tank to the building
+  repairPerSecond:    4,     // building HP restored per second, per tank
+
+  // Roadblocks (SHIFT / phone BLOCK button) — dropped behind the tank.
+  // They only block the kaiju; tanks and soldiers drive through.
+  roadblockCooldown:  10,    // seconds between drops
+  roadblockHits:      2,     // kaiju smashes needed to break one
+  roadblockMaxPerTank: 3,    // dropping another removes that tank's oldest
 
   // Getting crushed
-  tankRespawnSeconds: 5,     // seconds until a crushed tank comes back
+  tankRespawnSeconds: 3,     // seconds until a crushed tank comes back
   respawnMinDistance: 12,    // respawn at least this many tiles from the kaiju
                              // (also always outside the kaiju's view)
 
@@ -75,7 +85,7 @@ export const TUNING = {
   soldiersPerTank:    4,     // squad size
   soldierSpacing:     0.35,  // how far behind the tank each pair walks
   soldierSpread:      0.2,   // how far to the side of the tank's path they walk
-  soldierHeight:      0.32,  // how big a soldier is drawn (visual only)
+  soldierHeight:      0.2,  // how big a soldier is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
   //  BUILDINGS & POINTS  (points go to the kaiju)
@@ -89,9 +99,9 @@ export const TUNING = {
   //  MATCH
   // ───────────────────────────────────────────────────────────────
   matchSeconds:       300,   // round length (kaiju wins if still alive at 0)
-  countdownSeconds:   3,     // "3-2-1" before a round
+  countdownSeconds:   10,     // "3-2-1" before a round
   endScreenSeconds:   12,    // results screen, then the next round starts
-  maxTanks:           3,     // tank seats per game
+  maxTanks:           6,     // tank seats per game
   afkSeconds:         60,    // lobby: no key press / stick move for this long = AFK.
                              // AFK players don't block the start, and anyone can take
                              // an AFK kaiju's seat.
