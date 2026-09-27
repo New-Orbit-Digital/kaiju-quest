@@ -6,9 +6,11 @@ Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocki
 
 ## Modes
 
-- **Points race** (default): the kaiju scores for destroyed buildings and crushed tanks; tanks score for repaired building HP and kaiju kills. The kaiju respawns after a kill (tanks get a few seconds of double-speed repairs). A neutral **bonus crate** drops on the streets, drifting toward the kaiju (faster with more tanks); whoever grabs it doubles their side's points and halves the other side's for 20 s. Highest score at the buzzer wins.
-- **King of the Hill** (beta): everyone is a colour-tinted kaiju (phones too). Smash buildings (×3 inside the moving gold ring) and each other. Top score wins.
-- **Evacuation** (beta): a fixed crowd of 60 civilians walks to the exits (green pads mid-edge). Kaiju stomps, tanks shepherd and wall off the kaiju with sturdy, unlimited roadblocks. First side past half the crowd wins.
+- **Save the City!** (default): the kaiju scores for destroyed buildings and crushed tanks; tanks score for repaired building HP and kaiju kills. The kaiju respawns after a kill (tanks get a few seconds of double-speed repairs). A neutral **bonus crate** drops on the streets, drifting toward the kaiju (faster with more tanks); whoever grabs it doubles their side's points and halves the other side's for 20 s. Highest score at the buzzer wins.
+- **King of the Hill**: everyone is a colour-tinted kaiju (phones too). Smash buildings (×3 inside the red zone, which jumps every 20 s with a red-alert siren) and each other. The round lasts 30 s per player and the first to 250 points per player wins outright; otherwise top score at the buzzer.
+- **Evacuation**: a fixed crowd of 60 civilians walks to the exits (green pads mid-edge). Kaiju stomps, tanks shepherd and wall off the kaiju with sturdy, unlimited roadblocks. First side past half the crowd wins. A crowd murmur gets louder the more civilians are around you.
+
+Your cooldown (kaiju boost / tank roadblock) shows on the coloured ring under your unit: it drains to a pale ring, refills, and flashes when ready. Tanks drop roadblocks in front of them.
 
 Every 1-vs-N number (kaiju health and speed, respawn times, repair rate, crush / kill points, crate drift) lives in the **SCALING** table in `shared/tuning.js`, one column per tank count. `node tools/balance.mjs [race|evac|koth] [rounds]` plays bot rounds at every tank count and prints average scores (bots are simple: a rough first pass, not a verdict).
 
@@ -45,7 +47,7 @@ Sides are picked in the lobby. `?role=kaiju` / `?role=tank` sets a starting pref
 | Bot behaviour | `shared/bots.js` |
 | 1-vs-N balance (per tank count) | `SCALING` in `shared/tuning.js`; check with `node tools/balance.mjs` |
 | Room codes / share links | `server/src/KaijuRoom.js` (codes) + `server/src/index.js` (`/room/:code`) |
-| Game modes (Points race · King of the Hill · Evacuation) | rules in `shared/game.js`, numbers under GAME MODES in `shared/tuning.js` |
+| Game modes (Save the City! · King of the Hill · Evacuation) | rules in `shared/game.js`, numbers under GAME MODES in `shared/tuning.js` |
 | Sound effects | files in `client/public/assets/sfx/`, wiring in `client/src/audio.js` + `main.js` |
 | The city layout (ASCII map, one character per tile) and spawn points | `shared/map.js` |
 | Which Kenney model goes on which lot, and road tiling | `client/src/city.js` |

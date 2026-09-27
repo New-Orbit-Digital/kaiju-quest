@@ -29,7 +29,7 @@ export class KaijuRoom extends Room {
     if (state.private) this.setPrivate(true);
     state.phase = 'lobby'; state.clock = 0; state.winner = '';
     state.kaijuScore = 0; state.tankScore = 0; state.kaijuSpeed = 0;
-    state.mode = ''; state.hillX = 0; state.hillZ = 0; state.hillIn = 0; state.evacuated = 0; state.stomped = 0;
+    state.mode = ''; state.hillX = 0; state.hillZ = 0; state.hillIn = 0; state.target = 0; state.evacuated = 0; state.stomped = 0;
     state.bonus = ''; state.bonusIn = 0; state.healIn = 0; state.crateOn = false; state.crateX = 0; state.crateZ = 0; state.crateIn = 0;
     this.setState(state);
     this.game = createGame({

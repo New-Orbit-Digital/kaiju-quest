@@ -239,21 +239,25 @@ test('repairing flag is set only while a tank is fixing a building', () => {
   assert.equal(T0.repairing, false);
 });
 
-test('roadblocks: drop behind the tank across the road, block only the kaiju, 2 smashes, cooldown', () => {
+test('roadblocks: drop in front of the tank across the road, block only the kaiju, 2 smashes, cooldown', () => {
   const { g, state, run, K, T0, place } = setup(1);
   place(K, 24, 12); place(T0, 6, 3);
   g.input('T0', { x: 1, z: 0 }); g.tick(0.05); g.input('T0', { x: 0, z: 0 });   // face east
-  const tx = Math.round(T0.x) - 1;
+  const tx = Math.round(T0.x) + 1;
   g.block('T0'); g.tick(0.05);
-  assert.ok(state.roadblocks.has(`${tx},3`), 'dropped on the tile behind (west)');
+  assert.ok(state.roadblocks.has(`${tx},3`), 'dropped on the tile in front (east)');
   assert.equal(state.roadblocks.get(`${tx},3`).rot, Math.PI / 2, 'barrier turned across the east–west road');
   g.block('T0'); g.tick(0.05);
   assert.equal(state.roadblocks.size, 1, 'cooldown');
+  place(T0, 24, 24);                         // out of the kaiju's way
   place(K, tx - 2, 3); K.rot = Math.PI / 2;
   g.input('K', { x: 1, z: 0 }); run(1.5); g.input('K', { x: 0, z: 0 });
   assert.ok(K.x < tx - 0.5, `kaiju blocked at x=${K.x.toFixed(2)}`);
+  const kx = K.x; place(K, 24, 12);          // step the kaiju aside while the tank drives through
+  place(T0, tx + 1, 3);
   g.input('T0', { x: -1, z: 0 }); run(0.8); g.input('T0', { x: 0, z: 0 });
   assert.ok(T0.x < tx, 'tank passed through its own roadblock');
+  place(T0, 24, 24); place(K, kx, 3);
   T.strikeRange = 1.5;
   for (let i = 0; i < T.roadblockHits; i++) { run(T.strikeCooldown + 0.05); K.rot = Math.PI / 2; g.action('K'); g.tick(0.05); }
   T.strikeRange = 1;
@@ -448,7 +452,7 @@ test('king of the hill: the hill moves on its timer and multiplies smash points 
   assert.equal(state.buildingHp[house.id], 0);
   assert.equal(K.score, T.buildingPoints[house.kind] * T.hillMultiplier);
   run(T.hillMoveSeconds + 0.1);
-  assert.ok(Math.hypot(state.hillX - first.x, state.hillZ - first.z) >= T.hillRadius * 2, 'hill moved');
+  assert.ok(state.hillX !== first.x || state.hillZ !== first.z, 'zone moved');
 });
 
 test('king of the hill: needs two players to start', () => {
@@ -538,4 +542,71 @@ test('bots: a person picking KAIJU takes the seat from a bot kaiju', () => {
   g.join('me', { role: 'tank', name: 'Me' });
   assert.equal(g.setRole('me', 'kaiju'), true);
   assert.equal(state.players.get(bk).role, 'tank');
+});
+
+test('bots: a bot kaiju walks up to a roadblock in its way and smashes through it', () => {
+  const state = plainMake.state();
+  const g = createGame({ state });
+  const bots = createBots(g, state, () => 0.5);
+  const kid = bots.add('kaiju'); const tid = bots.add('tank');
+  for (let t = 0; t < T.countdownSeconds + 0.2; t += 0.05) { bots.tick(0.05, tid); g.tick(0.05); }
+  const K = state.players.get(kid), Tk = state.players.get(tid);
+  // the kaiju chases a tank along row 3; a roadblock sits between them
+  K.x = 2; K.z = 3; Tk.x = 5.6; Tk.z = 3;
+  state.roadblocks.set('4,3', { x: 4, z: 3, hits: T.roadblockHits, slot: 0, rot: Math.PI / 2 });
+  for (let t = 0; t < 6 && state.roadblocks.size; t += 0.05) { bots.tick(0.05, tid); g.tick(0.05); }
+  assert.equal(state.roadblocks.size, 0, 'bot kaiju smashed the roadblock');
+});
+
+test('bots: tanks spread out instead of stacking on one spot', () => {
+  const state = plainMake.state();
+  let seed = 3; const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const g = createGame({ state, rng });
+  const bots = createBots(g, state, rng);
+  bots.add('kaiju'); const ids = [bots.add('tank'), bots.add('tank'), bots.add('tank')];
+  for (let t = 0; t < T.countdownSeconds + 0.2; t += 0.05) { bots.tick(0.05); g.tick(0.05); }
+  const ts = ids.map(i => state.players.get(i));
+  ts.forEach(t => { t.x = 0; t.z = 20; });   // all on one tile
+  let stacked = 0, samples = 0;
+  for (let t = 0; t < 30; t += 0.05) {
+    bots.tick(0.05); g.tick(0.05);
+    if (t > 10 && Math.round(t * 20) % 20 === 0) {
+      samples++;
+      const alive = ts.filter(x => x.alive);
+      if (alive.length >= 2 && alive.every(a => alive.every(b => Math.hypot(a.x - b.x, a.z - b.z) < 0.6))) stacked++;
+    }
+  }
+  assert.ok(stacked < samples / 2, `stacked in ${stacked}/${samples} samples`);
+});
+
+test('king of the hill: round time and winning score scale with the number of players', () => {
+  const { g, state, run, K, place } = setup(2, { mode: 'koth' });
+  const players = state.players.size;
+  assert.equal(players, 3);
+  assert.ok(Math.abs(state.clock - (T.kothSecondsPerPlayer * players - 0.1)) < 0.2, `clock ${state.clock}`);
+  assert.equal(state.target, T.kothPointsPerPlayer * players);
+  // reaching the target ends the round at once
+  K.score = state.target - T.buildingPoints.house;
+  const house = g.city.owner[4][1];
+  state.buildingHp[house] = T.strikeDamage;
+  for (const id of ['T0', 'T1']) place(state.players.get(id), 30, 30);
+  state.hillX = 30; state.hillZ = 30; state.hillIn = 99;   // keep the zone away from this house
+  place(K, 1, 3); K.rot = 0; K.strikeIn = 0;
+  g.action('K'); g.tick(0.05);
+  assert.equal(state.phase, 'ended');
+  assert.equal(state.winner, 'K');
+});
+
+test('king of the hill: the zone respawns next to whoever is furthest behind', () => {
+  const { g, state, events, run, K, place } = setup(1, { mode: 'koth' });
+  const R = state.players.get('T0');
+  K.score = 200; R.score = 10;          // R is behind
+  place(K, 30, 0); place(R, 0, 30);     // opposite corners
+  state.hillIn = 0.01; run(0.05);
+  const dR = Math.hypot(state.hillX - R.x, state.hillZ - R.z), dK = Math.hypot(state.hillX - K.x, state.hillZ - K.z);
+  assert.ok(dR < dK, `zone near the trailing player (${dR.toFixed(1)} vs ${dK.toFixed(1)})`);
+  assert.equal(events.filter(e => e.type === 'hill').pop().near, 'T0');
+  K.score = 0;                           // now K is behind
+  state.hillIn = 0.01; run(0.05);
+  assert.ok(Math.hypot(state.hillX - K.x, state.hillZ - K.z) < Math.hypot(state.hillX - R.x, state.hillZ - R.z));
 });

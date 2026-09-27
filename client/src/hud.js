@@ -3,11 +3,14 @@
 import * as THREE from 'three';
 import { TUNING } from '../../shared/tuning.js';
 import { colourHex, kaijuHex } from './units.js';
-import { keyNames } from './input.js';
+import { keyNames, usingGamepad } from './input.js';
 import { MODES, MODE_NAMES, BETA_MODES } from '../../shared/game.js';
 
 const CSS = `
 [hidden] { display: none !important; }
+/* big screens: panels, text and buttons scale with the window (--kq-ui) */
+#kq-top, #kq-banner, #kq-end .card, #kq-lobby, #kq-pick .card, #kq-toast, #kq-split, #kq-mute, #hud, #status,
+.kq-tag, #kq-edge, #kq-hillarrow, #kq-cratearrow, .kq-marker { zoom: var(--kq-ui, 1); }
 #kq-top { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
   display: flex; gap: 14px; align-items: center; padding: 8px 14px; border-radius: 8px;
   background: rgba(12,16,24,.78); color: #eef2f6; font: 600 14px/1.2 system-ui, sans-serif; pointer-events: none; z-index: 5; }
@@ -28,6 +31,7 @@ const CSS = `
 #kq-mute { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 6; width: 40px; height: 40px;
   border-radius: 50%; border: 0; background: rgba(12,16,24,.78); color: #eef2f6; font: 700 16px/1 system-ui, sans-serif; cursor: pointer; }
 .kq-mobile #kq-mute { bottom: auto; top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; width: 34px; height: 34px; font-size: 14px; }
+.kq-padfocus { outline: 3px solid #fff !important; outline-offset: 3px; box-shadow: 0 0 0 6px rgba(245,184,46,.55) !important; }
 #kq-top .score small { opacity: .7; font-weight: 500; }
 #kq-top > div { white-space: nowrap; }
 #kq-top .score, #kq-top .extra { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
@@ -43,7 +47,7 @@ const CSS = `
 #kq-cratearrow span { position: absolute; left: -40px; top: 16px; width: 80px; text-align: center; color: #fff;
   font: 700 11px/1 system-ui, sans-serif; text-shadow: 0 1px 3px #000; }
 #kq-hillarrow { position: fixed; width: 0; height: 0; z-index: 5; pointer-events: none; }
-#kq-hillarrow::before { content: ''; position: absolute; left: -16px; top: -14px; border-left: 28px solid #f5b82e;
+#kq-hillarrow::before { content: ''; position: absolute; left: -16px; top: -14px; border-left: 28px solid #ff3b30;
   border-top: 14px solid transparent; border-bottom: 14px solid transparent; filter: drop-shadow(0 0 4px rgba(0,0,0,.8)); }
 #kq-hillarrow span { position: absolute; left: -40px; top: 16px; width: 80px; text-align: center; color: #fff;
   font: 700 11px/1 system-ui, sans-serif; text-shadow: 0 1px 3px #000; }
@@ -145,10 +149,22 @@ const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)
 
 export function createHud({ mobile }) {
   const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
+  let ui = 1;
+  // Scale the HUD with the window: 1× on a laptop-sized window, up to
+  // TUNING.uiMaxScale on a big TV. Phones stay 1×.
+  const fitUi = () => {
+    const s = mobile ? 1 : Math.max(1, Math.min(TUNING.uiMaxScale, Math.min(innerWidth / 1280, innerHeight / 720) * TUNING.uiScale));
+    document.documentElement.style.setProperty('--kq-ui', s.toFixed(3));
+    ui = s;
+  };
+  // zoomed elements take left/top in their own (zoomed) pixels
+  const at = (node, x, y) => { node.style.left = `${x / ui}px`; node.style.top = `${y / ui}px`; };
+  fitUi();
+  addEventListener('resize', fitUi);
   if (mobile) document.documentElement.classList.add('kq-mobile');
   const el = (html) => { const d = document.createElement('div'); d.innerHTML = html; const n = d.firstElementChild; document.body.appendChild(n); return n; };
   const top = el(`<div id="kq-top" hidden><div class="hp"><i></i><b></b></div><div class="clock"></div><div class="score"></div><div class="extra"></div></div>`);
-  const hillArrow = el(`<div id="kq-hillarrow" hidden><span>HILL</span></div>`);
+  const hillArrow = el(`<div id="kq-hillarrow" hidden><span>ZONE</span></div>`);
   const crateArrow = el(`<div id="kq-cratearrow" class="kq-goldarrow" hidden><span>CRATE</span></div>`);
   const split = el(`<div id="kq-split" hidden><i class="k"></i><i class="t"></i></div>`);
   const muteBtn = el(`<button id="kq-mute" type="button" title="Sound on/off (M)">🔊</button>`);
@@ -192,12 +208,75 @@ export function createHud({ mobile }) {
     const pad = 36, sx = (cx - pad) / Math.abs(dx || 1e-6), sy = (cy - pad) / Math.abs(dy || 1e-6);
     const sc = Math.min(sx, sy);
     node.hidden = false;
-    node.style.left = `${cx + dx * sc}px`; node.style.top = `${cy + dy * sc}px`;
+    at(node, cx + dx * sc, cy + dy * sc);
     node.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
     node.querySelector('span').style.transform = `rotate(${-Math.atan2(dy, dx)}rad)`;
   }
 
+  // ── Controller menu navigation ──
+  let padFocus = null, padKey = '';
+  // menus re-render, so remember the highlighted button by what it does
+  const keyOf = (b) => JSON.stringify({ ...b.dataset, t: b.dataset && Object.keys(b.dataset).length ? '' : b.textContent });
+  const visible = (n) => n && !n.hidden && n.isConnected && n.getClientRects().length > 0;
+  function padRoot() {
+    const pick = document.getElementById('kq-pick');
+    if (visible(pick)) return pick;
+    if (visible(end)) return end;
+    if (visible(lobby)) return lobby;
+    return null;
+  }
+  const padButtons = (root) => [...root.querySelectorAll('button')].filter(b => !b.disabled && visible(b));
+  function setPadFocus(el) {
+    if (padFocus && padFocus !== el) padFocus.classList.remove('kq-padfocus');
+    padFocus = el; padKey = el ? keyOf(el) : '';
+    if (el) { el.classList.add('kq-padfocus'); el.focus?.({ preventScroll: true }); }
+  }
+  // after a re-render, find the button that replaced the highlighted one
+  function currentFocus(btns) {
+    if (btns.includes(padFocus)) return padFocus;
+    const same = padKey && btns.find(b => keyOf(b) === padKey);
+    if (same) setPadFocus(same);
+    return same || null;
+  }
+
   return {
+    // Is a menu open that a controller should drive?
+    padMenuOpen() {
+      const root = padRoot();
+      if (root && padKey && usingGamepad()) currentFocus(padButtons(root));
+      return !!root;
+    },
+    // Move the highlight to the nearest button in a direction (null = clear it).
+    padNav(dir) {
+      const root = padRoot();
+      if (!root || !dir) { if (!root) setPadFocus(null); return; }
+      const btns = padButtons(root);
+      if (!btns.length) return;
+      if (!currentFocus(btns)) { setPadFocus(btns[0]); return; }
+      const c = (b) => { const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+      const here = c(padFocus);
+      const [dx, dy] = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
+      let best = null, bestScore = Infinity;
+      for (const b of btns) {
+        if (b === padFocus) continue;
+        const p = c(b), vx = p.x - here.x, vy = p.y - here.y;
+        const along = vx * dx + vy * dy;
+        if (along <= 4) continue;                                  // must be in that direction
+        const score = along + Math.abs(vx * dy - vy * dx) * 2;     // prefer straight lines
+        if (score < bestScore) { bestScore = score; best = b; }
+      }
+      if (best) setPadFocus(best);
+    },
+    // Press the highlighted button (or the first one).
+    padAccept() {
+      const root = padRoot();
+      if (!root) return;
+      const btns = padButtons(root);
+      const target = currentFocus(btns) || btns[0];
+      if (!target) return;
+      setPadFocus(target);
+      target.click();
+    },
     onMute(fn, muted) {
       muteBtn.textContent = muted ? '🔇' : '🔊';
       muteBtn.addEventListener('click', () => { const m = fn(); muteBtn.textContent = m ? '🔇' : '🔊'; muteBtn.blur(); });
@@ -222,7 +301,8 @@ export function createHud({ mobile }) {
         input.value = saved;
         codeIn.addEventListener('input', () => { codeIn.value = codeIn.value.toUpperCase().replace(/[^A-Z]/g, ''); });
         const go = (how) => {
-          const name = input.value.trim().slice(0, 16);
+          // controller players can't type: an empty name becomes "Player"
+          const name = input.value.trim().slice(0, 16) || (usingGamepad() ? 'Player' : '');
           if (!name) { input.focus(); return; }
           const c = how === 'code' ? (codeIn.value || code).toUpperCase() : '';
           if (how === 'code' && c.length !== TUNING.roomCodeLength) { codeIn.focus(); return; }
@@ -315,7 +395,7 @@ export function createHud({ mobile }) {
         const text = (p.name || 'Player') + (id === myId ? ' (you)' : '');
         if (t.textContent !== text) t.textContent = text;
         t.style.setProperty('--c', p.role === 'kaiju' ? kaijuHex(p.slot) : colourHex(p.slot));
-        t.hidden = false; t.style.left = `${s.sx}px`; t.style.top = `${s.sy}px`;
+        t.hidden = false; at(t, s.sx, s.sy);
         seen.add(id);
       });
       for (const [id, t] of tags) if (!seen.has(id)) { if (!state.players.has(id)) { t.remove(); tags.delete(id); } else t.hidden = true; }
@@ -338,13 +418,13 @@ export function createHud({ mobile }) {
         top.querySelector('.clock').textContent = playing ? fmt(state.clock) : 'END';
         const bonus = state.bonus && state.bonusIn > 0 ? ` ×${TUNING.crateFavor}` : '';
         top.querySelector('.score').innerHTML = state.mode === 'koth'
-          ? `★ ${pts(me.score)} <small>you</small>` + (lead && lead.id !== myId ? ` · ${esc(lead.p.name)} ${pts(lead.p.score)}` : lead ? ' · leading' : '')
+          ? `★ ${pts(me.score)}${state.target ? `<small>/${state.target}</small>` : ''} <small>you</small>` + (lead && lead.id !== myId ? ` · ${esc(lead.p.name)} ${pts(lead.p.score)}` : lead ? ' · leading' : '')
           : state.mode === 'evac'
           ? `<span class="k">${state.stomped} stomped</span> · <span class="t">${state.evacuated} out</span> <small>of ${TUNING.evacPool}</small>`
           : `<span class="k">KAIJU ${pts(state.kaijuScore)}${state.bonus === 'kaiju' ? bonus : ''}</span> · ` +
             `<span class="t">TANKS ${pts(state.tankScore)}${state.bonus === 'tanks' ? bonus : ''}</span>`;
         top.querySelector('.extra').textContent = !playing ? ''
-          : state.mode === 'koth' ? `HILL MOVES ${Math.max(0, Math.ceil(state.hillIn))}s`
+          : state.mode === 'koth' ? `ZONE MOVES ${Math.max(0, Math.ceil(state.hillIn))}s`
           : state.mode === 'race' ? [state.bonusIn > 0 ? `${state.bonus === 'kaiju' ? 'KAIJU' : 'TANK'} BONUS ${Math.ceil(state.bonusIn)}s` : '',
                                      state.healIn > 0 ? `REPAIR ×${TUNING.deathRepairBoost} ${Math.ceil(state.healIn)}s` : ''].filter(Boolean).join(' · ')
           : '';
@@ -376,7 +456,7 @@ export function createHud({ mobile }) {
         const kaiju = me.role === 'kaiju';
         const half = Math.floor(TUNING.evacPool / 2) + 1;
         b = state.mode === 'koth'
-          ? `KING OF THE HILL<small>Everyone's a kaiju · smash buildings (×${TUNING.hillMultiplier} in the gold ring) and each other · top score wins</small>`
+          ? `KING OF THE HILL<small>Everyone's a kaiju · smash buildings (×${TUNING.hillMultiplier} in the red zone) and each other · first to ${state.target} wins</small>`
           : state.mode === 'evac'
           ? (kaiju ? `EVACUATION<small>Stomp ${half} of the ${TUNING.evacPool} civilians before they reach the green exits</small>`
                    : `EVACUATION<small>Get ${half} of the ${TUNING.evacPool} civilians to the green exits · wall off the kaiju with roadblocks</small>`)
@@ -411,24 +491,8 @@ export function createHud({ mobile }) {
         }
       } else endSig = '';
 
-      // ability meter (desktop; phones use the BLOCK button)
-      ability.hidden = !playing || mobile || (me.role === 'tank' && !me.alive);
-      if (!ability.hidden) {
-        const k = keyNames();
-        const secs = (v) => `${Math.ceil(v)}s`;
-        let text, left, total;
-        if (me.role === 'kaiju') {
-          text = (me.strikeIn <= 0 ? `${k.smash}  SMASH — ready` : `${k.smash}  SMASH`) + '   ·   ' +
-                 (me.boosting ? 'BOOSTING' : me.boostIn > 0 ? `${k.boost}  BOOST  ${secs(me.boostIn)}` : `${k.boost}  BOOST — ready`);
-          left = me.boostIn; total = TUNING.boostCooldown;
-        } else {
-          text = me.blockIn > 0 ? `${k.block}  ROADBLOCK  ${secs(me.blockIn)}` : `${k.block}  ROADBLOCK — ready`;
-          left = me.blockIn; total = TUNING.roadblockCooldown;
-        }
-        ability.classList.toggle('ready', left <= 0);
-        ability.querySelector('span').textContent = text;
-        ability.querySelector('.bar i').style.width = `${(1 - left / total) * 100}%`;
-      }
+      // cooldowns show on the ring under your own unit (units.js), not in the HUD
+      ability.hidden = true;
 
       // edge arrow: tanks only, when the kaiju is off screen
       let kaijuUnit = null, kaijuState = null;
@@ -443,7 +507,7 @@ export function createHud({ mobile }) {
           const pad = 36, sx = (cx - pad) / Math.abs(dx || 1e-6), sy = (cy - pad) / Math.abs(dy || 1e-6);
           const s = Math.min(sx, sy);
           edge.hidden = false;
-          edge.style.left = `${cx + dx * s}px`; edge.style.top = `${cy + dy * s}px`;
+          at(edge, cx + dx * s, cy + dy * s);
           edge.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
           edge.querySelector('span').style.transform = `rotate(${-Math.atan2(dy, dx)}rad)`;
         }
@@ -460,7 +524,7 @@ export function createHud({ mobile }) {
           const s = project(camera, u.display.x, h, u.display.z);
           if (!s.on) return;
           const m = marker(id, p.role === 'kaiju' ? '#ff4d3d' : colourHex(p.slot));
-          m.hidden = false; m.style.left = `${s.sx}px`; m.style.top = `${s.sy}px`;
+          m.hidden = false; at(m, s.sx, s.sy);
           seen.add(id);
         });
       }

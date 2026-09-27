@@ -18,7 +18,7 @@ import { bfs as pathBfs, steer, DIRS } from './path.js';
 import { KAIJU_SEATS } from './game.js';
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
-export function createBots(game, state) {
+export function createBots(game, state, rand = Math.random) {
   const city = game.city;
   const brains = new Map(); // id → { path, goalKey, replanIn }
   let count = 0;
@@ -31,6 +31,22 @@ export function createBots(game, state) {
   const goTo = (role, sx, sz, tx, tz, pass = false) =>
     bfs(role, sx, sz, (x, z) => x === Math.round(tx) && z === Math.round(tz), 2000, pass);
 
+  // Spots other bot tanks are standing on or heading to, so bots spread out
+  // instead of stacking up and moving as one.
+  function claimed(selfId) {
+    const spots = [];
+    for (const [oid, ob] of brains) {
+      if (oid === selfId) continue;
+      const o = state.players.get(oid);
+      if (!o || o.role !== 'tank' || !o.alive) continue;
+      spots.push({ x: o.x, z: o.z });
+      const goal = ob.path?.[ob.path.length - 1];
+      if (goal) spots.push(goal);
+    }
+    for (const o of state.players.values()) if (o.role === 'tank' && o.alive && !o.bot) spots.push({ x: o.x, z: o.z });
+    return (x, z) => spots.some(s => Math.hypot(s.x - x, s.z - z) < 2);
+  }
+
   function thinkTank(id, p, b, dt) {
     const k = kaijuOf();
     if (!p.alive || !k || state.phase !== 'playing') { game.input(id, { x: 0, z: 0 }); return; }
@@ -42,26 +58,31 @@ export function createBots(game, state) {
     else if (c && dist(p, c) < 8 && (!k.alive || dist(p, c) < dist(k, c))) mode = 'crate';   // grab it first
     else if (!k.alive) mode = 'repair';                                                         // kaiju down: fix things
     else mode = (d > T.tankRange - 0.8 || !game.canSee(p, k)) ? 'approach' : 'hold';
-    if (mode === 'hold') { game.input(id, { x: 0, z: 0 }); b.path = null; b.mode = mode; return; }
-
     b.replanIn -= dt;
+    // sitting right on top of another tank? move somewhere else
+    const busy = claimed(id);
+    if (mode === 'hold' && busy(p.x, p.z)) mode = 'approach';
+    if (mode === 'hold') { game.input(id, { x: 0, z: 0 }); b.path = null; b.mode = mode; return; }
     if (!b.path || b.mode !== mode || b.replanIn <= 0) {
       b.mode = mode; b.replanIn = 0.5;
       if (mode === 'approach') {
-        b.path = bfs('tank', sx, sz, (x, z) => {
+        const good = (x, z) => {
           const dd = Math.hypot(x - k.x, z - k.z);
           return dd >= 3.5 && dd <= T.tankRange - 1 && game.canSee({ x, z }, k);
-        }, 2000);
+        };
+        // a firing spot nobody else has taken; fall back to any firing spot
+        b.path = bfs('tank', sx, sz, (x, z) => good(x, z) && !busy(x, z), 2000) || bfs('tank', sx, sz, good, 2000);
       } else if (mode === 'crate') {
         b.path = goTo('tank', sx, sz, c.x, c.z);
       } else if (mode === 'repair') {
-        // nearest street tile beside a damaged (not destroyed) building
-        b.path = bfs('tank', sx, sz, (x, z) => DIRS.some(([dx, dz]) => {
+        // nearest free street tile beside a damaged (not destroyed) building
+        const damaged = (x, z) => DIRS.some(([dx, dz]) => {
           const bid = city.owner[z + dz]?.[x + dx];
           if (bid === undefined || bid < 0) return false;
           const bb = city.buildings[bid], hp = state.buildingHp[bid];
           return bb.kind !== 'park' && hp > 0 && hp < game.maxHpOf(bb);
-        }), 2000);
+        });
+        b.path = bfs('tank', sx, sz, (x, z) => damaged(x, z) && !busy(x, z), 2000) || bfs('tank', sx, sz, damaged, 2000);
       } else {
         // flee: the reachable street tile within a few steps that is farthest from the kaiju
         let best = null, bestD = -1;
@@ -91,6 +112,18 @@ export function createBots(game, state) {
       if (t === p || !t.alive) continue;
       if (t.role === 'tank' && dist(p, t) < preyD) { preyD = dist(p, t); prey = t; }
       if (t.role === 'kaiju' && state.mode === 'koth' && dist(p, t) < 5 && dist(p, t) < preyD + 1) { preyD = dist(p, t); prey = t; hit = true; }
+    }
+    // King of the Hill: every few seconds, decide whether to go after whoever is
+    // winning (if it isn't us and they're well ahead) instead of fighting over the zone
+    if (state.mode === 'koth') {
+      b.huntIn = (b.huntIn ?? rand() * 4) - dt;
+      if (b.huntIn <= 0) {
+        b.huntIn = 6;
+        let leader = null;
+        for (const t of state.players.values()) if (t !== p && t.alive && (!leader || t.score > leader.score)) leader = t;
+        b.hunt = leader && leader.score >= p.score + T.kothKillPoints * 0.6 && rand() < 0.6 ? leader : null;
+      }
+      if (b.hunt && b.hunt.alive && !prey) { prey = b.hunt; hit = true; }
     }
     if (state.mode === 'evac') {
       let cd = 7;
@@ -124,11 +157,16 @@ export function createBots(game, state) {
       }), 2000, true);
       b.path = (state.mode === 'koth' && target(true)) || target(false);
     }
-    // roadblock in the way → face it and smash
-    const next = b.path?.[1] || b.path?.[0];
-    if (next && game.blocked(next.x, next.z)) {
+    // roadblock on the way: walk up to it, then face it and smash (it's only in
+    // reach from the tile right beside it)
+    const rb = (b.path || []).slice(0, 3).find(t => game.blocked(t.x, t.z));
+    if (rb) {
+      if (Math.hypot(rb.x - p.x, rb.z - p.z) > T.strikeRange + 0.1) {
+        game.input(id, { x: Math.sign(Math.round(rb.x - p.x)), z: Math.abs(rb.x - p.x) > 0.5 ? 0 : Math.sign(Math.round(rb.z - p.z)) });
+        return;
+      }
       game.input(id, { x: 0, z: 0 });
-      p.rot = Math.atan2(next.x - p.x, next.z - p.z);
+      p.rot = Math.atan2(rb.x - p.x, rb.z - p.z);
       if (p.strikeIn <= 0) game.action(id);
       return;
     }

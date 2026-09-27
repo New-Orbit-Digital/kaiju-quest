@@ -18,6 +18,8 @@ export function isDown(code) { return down.has(code); }
 let pad = null;               // { x, y } stick vector or null
 let padDpad = new Set();      // WASD codes held on the D-pad
 let padPrev = [];             // last frame's pressed buttons
+let padUi = false;            // true while a menu has the D-pad (it navigates instead of moving)
+export function setPadUiMode(on) { if (padUi !== on) { padUi = on; changed(); } }
 let lastDevice = 'keyboard';  // 'keyboard' | 'gamepad' | 'touch' — for key labels
 addEventListener('keydown', () => { lastDevice = 'keyboard'; });
 export function usingGamepad() { return lastDevice === 'gamepad'; }
@@ -85,7 +87,7 @@ export function moveVector() {
   if (touch) return touchToWorld(touch, TUNING.joystickSnap);
   if (pad) return touchToWorld(pad, TUNING.gamepadSnap);
   const { fwd, right } = TUNING.controlScheme === 'screen' ? screenAxes() : streetAxes();
-  const held = (c) => down.has(c) || padDpad.has(c);
+  const held = (c) => down.has(c) || (!padUi && padDpad.has(c));
   let f = 0, r = 0;
   if (held('KeyW')) f += 1;
   if (held('KeyS')) f -= 1;

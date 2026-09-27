@@ -66,7 +66,6 @@ export function createTouchControls({ onBlock, onSmash, onBoost }) {
       const kaiju = me.role === 'kaiju';
       block.hidden = kaiju; smash.hidden = !kaiju; kboost.hidden = !kaiju;
       if (kaiju) {
-        if (me.strikeIn > 0) smash.dataset.cooling = ''; else delete smash.dataset.cooling;
         const bh = me.boosting ? 'GO!' : me.boostIn > 0 ? `BOOST<small>${Math.ceil(me.boostIn)}s</small>` : 'BOOST';
         if (bh !== lastBoost) { kboost.innerHTML = bh; lastBoost = bh; }
         if (me.boostIn > 0 && !me.boosting) kboost.dataset.cooling = ''; else delete kboost.dataset.cooling;

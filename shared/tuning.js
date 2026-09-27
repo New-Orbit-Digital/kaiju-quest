@@ -77,7 +77,7 @@ export const TUNING = {
   tankLength:         0.8,   // how big a tank is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
-  //  POINTS RACE  (the main mode: kaiju destruction points vs tank points)
+  //  SAVE THE CITY!  (the main mode: kaiju destruction points vs tank points)
   //  Highest score at the buzzer wins. The kaiju respawns when killed.
   // ───────────────────────────────────────────────────────────────
   buildingHp:     { house: 20, commercial: 40, industrial: 40, tower: 80 },
@@ -116,23 +116,25 @@ export const TUNING = {
 
   // ───────────────────────────────────────────────────────────────
   //  GAME MODES  (picked in the lobby or on the end screen)
-  //  'race' = Points race · 'koth' = King of the Hill (beta) · 'evac' = Evacuation (beta)
+  //  'race' = Save the City! · 'koth' = King of the Hill · 'evac' = Evacuation
   // ───────────────────────────────────────────────────────────────
   defaultMode:        'race',
 
-  // King of the Hill (beta): EVERYONE is a kaiju (colour-tinted), points race.
-  // A zone jumps around the city; buildings destroyed inside it score more.
-  hillRadius:         3,     // size of the hill, tiles from its centre
-  hillMoveSeconds:    15,    // the hill moves to a new spot every N seconds
-  hillMultiplier:     3,     // smash points × this inside the hill
-  hillMinBuildings:   5,     // a new hill spot needs at least this many standing buildings
+  // King of the Hill: EVERYONE is a kaiju (colour-tinted), highest score wins.
+  // A red zone jumps around the city; buildings destroyed inside it score more.
+  hillRadius:         6,     // size of the zone, tiles from its centre
+  hillMoveSeconds:    20,    // the zone moves to a new spot every N seconds (red-alert sound)
+  hillMultiplier:     3,     // smash points × this inside the zone
+  hillMinBuildings:   12,    // a new zone spot needs at least this many standing buildings
   kothHp:             100,   // each kaiju's health
   kothHitDamage:      25,    // a smash on another kaiju takes this much
   kothHitRange:       1.6,   // how close another kaiju must be to smash it, tiles
   kothKillPoints:     50,    // points for knocking out another kaiju
   kothRespawn:        5,     // seconds out after being knocked out
+  kothSecondsPerPlayer: 30,  // round length = this × number of kaiju (2 players = 1:00)
+  kothPointsPerPlayer: 250,  // first to this × number of kaiju wins outright
 
-  // Evacuation (beta): a fixed crowd of civilians walks to the exits (the middle
+  // Evacuation: a fixed crowd of civilians walks to the exits (the middle
   // of each map edge). Stomped vs escaped: first side past half the crowd wins.
   evacPool:           60,    // civilians in the whole round
   civilianSpawnSeconds: 3,   // a new civilian every N seconds (until the crowd runs out)
@@ -141,7 +143,7 @@ export const TUNING = {
   civilianPanicRange: 4,     // they re-route away from the kaiju inside this range
   evacRoadblockHits:  10,    // roadblocks are sturdier here (5× normal) …
   evacRoadblockCap:   0,     // … and unlimited (0 = no cap per tank)
-  civilianHeight:     0.3,   // how big a civilian is drawn (visual only)
+  civilianHeight:     0.5,   // how big a civilian is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
   //  MATCH
@@ -177,6 +179,8 @@ export const TUNING = {
                              // S+D = D's, W+A = A's, W+D = W's (false = old sum, cuts corners)
   controlScheme:      'street', // 'street': WASD follows the streets (W = up-right)
                                 // 'screen': W = straight up the screen
+  uiScale:            1,     // HUD size on big screens: × this on top of fitting the window
+  uiMaxScale:         2.5,   // … but never bigger than this (a 4K TV fits to about 3×)
   occluderOpacity:    0.22,  // buildings in front of a unit fade to this (0 = invisible)
   shadows:            true,  // shadows on desktop
 
@@ -185,6 +189,8 @@ export const TUNING = {
   // ───────────────────────────────────────────────────────────────
   sfxVolume:          0.7,   // master volume 0–1 (M mutes / unmutes in game)
   sfxHearing:         14,    // sounds fade out over this many tiles from you
+  crowdHearing:       5,     // Evacuation crowd noise: civilians within this many tiles of you count
+  crowdFull:          5,     // … and this many of them make it full volume
 
   // ───────────────────────────────────────────────────────────────
   //  ADVANCED  (rarely needs changing)

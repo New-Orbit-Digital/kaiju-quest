@@ -6,12 +6,14 @@ import { TUNING } from '../../shared/tuning.js';
 import { loadBytes } from './assets.js';
 
 const NAMES = ['building-destroyed', 'building-repair', 'monster-footsteps', 'monster-hit',
-  'roadblock-placed', 'tank-dead', 'tank-moving', 'tank-shooting'];
+  'roadblock-placed', 'tank-dead', 'tank-moving', 'tank-shooting', 'crowd-shouting', 'red-alert'];
+// Sounds that may not be in the repo yet: loaded if present, silently skipped if not.
+const OPTIONAL = ['trees-rustling'];
 
 // Per-file level balance (asset calibration, measured with ffmpeg volumedetect;
 // the engine loop is much louder than the rest and plays constantly).
 const LEVEL = { 'tank-moving': 0.3, 'monster-footsteps': 0.7, 'building-repair': 0.8,
-  'monster-hit': 1.3, 'roadblock-placed': 1.3 };
+  'monster-hit': 1.3, 'roadblock-placed': 1.3, 'crowd-shouting': 0.45, 'red-alert': 0.6, 'trees-rustling': 0.8 };
 const level = (n) => LEVEL[n] ?? 1;
 
 let ctx = null, master = null, muted = false;
@@ -30,11 +32,11 @@ export function initAudio() {
   master = ctx.createGain();
   master.gain.value = volume();
   master.connect(ctx.destination);
-  for (const n of NAMES) {
+  for (const n of [...NAMES, ...OPTIONAL]) {
     loadBytes(`./assets/sfx/${n}.mp3`)
       .then(b => ctx.decodeAudioData(b))
       .then(buf => { buffers[n] = buf; })
-      .catch(e => console.warn('[sfx]', n, e));
+      .catch(e => { if (!OPTIONAL.includes(n)) console.warn('[sfx]', n, e); });
   }
   // browsers start audio suspended until the player presses something
   const unlock = () => { if (ctx.state !== 'running') ctx.resume(); };

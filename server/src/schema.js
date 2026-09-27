@@ -49,6 +49,7 @@ export const MatchState = schema({
   mode: t.string(),     // 'race' | 'koth' | 'evac'
   hillX: t.number(), hillZ: t.number(), // King of the Hill centre
   hillIn: t.number(),   // seconds until the hill moves
+  target: t.number(),   // King of the Hill: first to this score wins
   evacuated: t.number(),// Evacuation: civilians out so far
   stomped: t.number(),  // Evacuation: civilians the kaiju got
   bonus: t.string(),    // crate tilt: '' | 'kaiju' | 'tanks'

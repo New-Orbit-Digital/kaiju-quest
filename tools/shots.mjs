@@ -26,7 +26,8 @@ async function open(name, contextOpts, query) {
   const p = await ctx.newPage();
   p.on('pageerror', e => errors.push(`${name}: ${e.message}`));
   p.on('console', m => { if (m.type() === 'error' && !m.text().includes('Failed to load resource')) errors.push(`${name}: ${m.text()}`); });
-  p.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('favicon.ico')) errors.push(`${name}: HTTP ${r.status()} ${r.url()}`); });
+  // (trees-rustling.mp3 is optional until it's added to the repo)
+  p.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('favicon.ico') && !r.url().includes('/sfx/trees-rustling')) errors.push(`${name}: HTTP ${r.status()} ${r.url()}`); });
   await p.goto(`http://localhost:${PORT}/${query}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.waitForFunction(() => window.__kq?.room?.state?.players?.size >= 1, null, { timeout: 90000 });
   return p;
@@ -57,7 +58,7 @@ try {
   await sleep(1000);
   let k = await me(kaiju), t = await me(phone);
   check(k.role === 'kaiju' && t.role === 'tank' && t.mobile && t.isMobile, `roles: desktop=${k.role}, phone=${t.role} (mobile flag ${t.mobile})`);
-  check(k.mode === 'race', `default mode is the Points race (${k.mode})`);
+  check(k.mode === 'race', `default mode is Save the City! (${k.mode})`);
   check(await phone.locator('#kq-stick').isVisible() && await phone.locator('#kq-block').isVisible(), 'phone shows joystick + BLOCK button');
   check(!(await kaiju.locator('#kq-stick').count()), 'desktop has no touch controls');
 
@@ -87,7 +88,7 @@ try {
     `lobby lists every player by name: ${names.join(', ')}`);
   // mode picker: three modes, the new two flagged beta; picking one syncs to everyone
   const modeBtns = await kaiju.evaluate(() => [...document.querySelectorAll('#kq-lobby [data-mode]')].map(b => b.innerText.replace(/\s+/g, ' ').trim()));
-  check(modeBtns.length === 3 && modeBtns.filter(t => /beta/i.test(t)).length === 2, `lobby mode picker: ${modeBtns.join(' | ')}`);
+  check(modeBtns.length === 3 && /Save the City/.test(modeBtns[0]) && !modeBtns.some(t => /beta/i.test(t)), `lobby mode picker: ${modeBtns.join(' | ')}`);
   await kaiju.locator('#kq-lobby [data-mode=koth]').dispatchEvent('click');
   await until(() => phone.evaluate(() => window.__kq.room.state.mode === 'koth'), 10000);
   check((await me(phone)).mode === 'koth', 'picking King of the Hill reaches the other player');
@@ -108,8 +109,34 @@ try {
   // keep Pat and Ghost "active" (the slow software renderer can take longer than afkSeconds to get here)
   for (const p of [phone, ghost]) await p.evaluate(() => { const r = window.__kq.room; r.send('input', { x: 0.01, z: 0 }); r.send('input', { x: 0, z: 0 }); });
   await sleep(300);
-  // Rex readies; the round must not start while Pat hasn't (Ghost is active too)
-  await kaiju.locator('#kq-lobby [data-act=ready]').dispatchEvent('click');
+  // Rex readies WITH A CONTROLLER: D-pad to the READY button, A to press it
+  await kaiju.evaluate(() => {
+    const pad = (i) => ({ axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, j) => ({ pressed: j === i, value: j === i ? 1 : 0 })) });
+    window.__pad = pad(-1);
+    navigator.getGamepads = () => [window.__pad];
+    window.__padSet = (i) => { window.__pad = pad(i); };
+  });
+  const frames = () => kaiju.evaluate(() => window.__kqFrame || 0);
+  const padTap = async (i) => {   // hold for 2 frames, release for 2 (slow software rendering)
+    await kaiju.evaluate((i) => window.__padSet(i), i);
+    const f0 = await frames(); await until(async () => (await frames()) >= f0 + 2, 20000);
+    await kaiju.evaluate(() => window.__padSet(-1));
+    const f1 = await frames(); await until(async () => (await frames()) >= f1 + 2, 20000);
+  };
+  const focused = () => kaiju.evaluate(() => document.querySelector('.kq-padfocus')?.textContent || '');
+  await padTap(13);   // D-pad down: highlights the first button
+  for (let i = 0; i < 12; i++) {   // walk the menu like a player would
+    const f = (await focused()).trim();
+    if (f === 'READY') break;
+    await padTap(/^PLAY (TANK|KAIJU)$/.test(f) ? 14 : /BOT/.test(f) ? 12 : 13);   // left / up / down
+  }
+  const onReady = (await focused()).trim();
+  check(onReady === 'READY', `controller D-pad highlights lobby buttons (on "${onReady}")`);
+  await padTap(0);    // A
+  await until(() => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).ready; }), 15000);
+  check(await kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).ready; }), 'controller A pressed READY');
+  await kaiju.evaluate(() => { navigator.getGamepads = () => []; });
+  // the round must not start while Pat hasn't readied (Ghost is active too)
   await sleep(1500);
   check((await me(kaiju)).phase === 'lobby', 'no start while others are not ready');
   // kick the ghost
@@ -149,7 +176,7 @@ try {
   await sleep(700);
   await kaiju.evaluate(() => window.__padPress(true));
   await until(() => kaiju.evaluate((h) => Array.from(window.__kq.room.state.buildingHp).reduce((a, b) => a + b, 0) < h,
-    hp1.reduce((a, b) => a + b, 0)), 8000);
+    hp1.reduce((a, b) => a + b, 0)), 20000);
   await kaiju.evaluate(() => window.__padPress(false));
   const hp2 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
   const padHit = hp1.map((h, i) => h - hp2[i]).reduce((a, b) => a + b, 0);

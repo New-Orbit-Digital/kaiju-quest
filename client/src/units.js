@@ -82,8 +82,10 @@ export function createUnit(role, slot, isMine) {
   if (src) {
     const model = SkeletonUtils.clone(src.scene);
     if (m.keepMeshes) {
+      // the loader may suffix names ("Body_1" holding "Body_2"…), so compare base names
+      const base = (n) => String(n || '').replace(/_\d+$/, '');
       model.traverse(o => {
-        if (o.isMesh && !m.keepMeshes.includes(o.name) && !m.keepMeshes.includes(o.parent?.name)) o.visible = false;
+        if (o.isMesh && !m.keepMeshes.includes(base(o.name)) && !m.keepMeshes.includes(base(o.parent?.name))) o.visible = false;
       });
     }
     // measure in native orientation (bones posed, skinning applied)
@@ -127,15 +129,53 @@ export function createUnit(role, slot, isMine) {
     outer.add(placeholder(role, colour));
   }
 
-  // Ring under your own unit so you can find yourself.
+  // Civilians are tiny: a bright disc under each keeps them easy to spot.
+  if (role === 'civilian') {
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.16, 20),
+      new THREE.MeshBasicMaterial({ color: 0xfff3b0, transparent: true, opacity: 0.85, depthWrite: false }));
+    disc.rotation.x = -Math.PI / 2; disc.position.y = 0.035;
+    outer.add(disc);
+  }
+
+  // Ring under your own unit so you can find yourself. It doubles as the
+  // cooldown meter (kaiju boost / tank roadblock): it drains to a pale ring,
+  // refills clockwise, and flashes when it's ready again.
+  let charge = null;
   if (isMine) {
     const big = role === 'kaiju';
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(big ? 0.55 : 0.36, big ? 0.68 : 0.46, 40),
-      new THREE.MeshBasicMaterial({ color: big ? (tint ? colour : 0x7dff8a) : colour, transparent: true, opacity: 0.85, depthWrite: false }));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.04;
-    outer.add(ring);
+    const r0 = big ? 0.55 : 0.36, r1 = big ? 0.68 : 0.46;
+    const bright = new THREE.Color(big ? (tint ? colour : 0x7dff8a) : colour);
+    const pale = bright.clone().lerp(new THREE.Color(0xffffff), 0.55);
+    const base = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 48),
+      new THREE.MeshBasicMaterial({ color: pale, transparent: true, opacity: 0.35, depthWrite: false }));
+    const arcMat = new THREE.MeshBasicMaterial({ color: bright, transparent: true, opacity: 0.9, depthWrite: false });
+    const arc = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 48), arcMat);
+    const ringGroup = new THREE.Group();
+    for (const m of [base, arc]) { m.rotation.x = -Math.PI / 2; ringGroup.add(m); }
+    base.position.y = 0.04; arc.position.y = 0.045;
+    outer.add(ringGroup);
+    let shown = 1, flashT = 0;
+    charge = {
+      set(frac, dt) {
+        frac = Math.max(0, Math.min(1, frac));
+        if (Math.abs(frac - shown) > 0.004 || (frac === 1 && shown !== 1)) {
+          if (frac === 1 && shown < 1) flashT = 0.45;          // just recharged: shine
+          shown = frac;
+          arc.geometry.dispose();
+          // start at 12 o'clock on screen and fill clockwise
+          arc.geometry = new THREE.RingGeometry(r0, r1, 48, 1, Math.PI / 2 - frac * Math.PI * 2 + Math.PI * 0.25, Math.max(0.0001, frac * Math.PI * 2));
+          arc.visible = frac > 0.002;
+        }
+        if (flashT > 0) {
+          flashT = Math.max(0, flashT - dt);
+          const f = flashT / 0.45;
+          ringGroup.scale.setScalar(1 + 0.3 * f);
+          arcMat.color.copy(bright).lerp(new THREE.Color(0xffffff), 0.8 * f);
+        } else { ringGroup.scale.setScalar(1); arcMat.color.copy(bright); }
+        // the ring is on the unit, which rotates; keep the fill anchored to the screen
+        ringGroup.rotation.y = -outer.rotation.y;
+      },
+    };
   }
 
   let current = null, oneShotLeft = 0, flash = 0, dead = false;
@@ -179,6 +219,7 @@ export function createUnit(role, slot, isMine) {
       if (m.death && actions[m.death]) { current = null; play(m.death, true); }
     },
     revive() { dead = false; current = null; mixer?.stopAllAction(); play(m.idle); },
+    setCharge(frac, dt) { charge?.set(frac, dt); },
     get dead() { return dead; },
   };
 }

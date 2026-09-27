@@ -180,13 +180,13 @@ export function createRoadblocks(scene, colourFor) {
   };
 }
 
-// ── King of the Hill: a glowing ring on the ground that slides to each new spot ──
+// ── King of the Hill: a red zone on the ground that jumps to each new spot ──
 export function createHill(scene, radius) {
   const g = new THREE.Group();
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, 48),
-    new THREE.MeshBasicMaterial({ color: 0xf5b82e, transparent: true, opacity: 0.22, depthWrite: false }));
-  const ring = new THREE.Mesh(new THREE.RingGeometry(radius - 0.2, radius, 64),
-    new THREE.MeshBasicMaterial({ color: 0xf5b82e, transparent: true, opacity: 0.85, depthWrite: false }));
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, 72),
+    new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.2, depthWrite: false }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius - 0.25, radius, 96),
+    new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.85, depthWrite: false }));
   for (const m of [disc, ring]) { m.rotation.x = -Math.PI / 2; m.renderOrder = 2; g.add(m); }
   disc.position.y = 0.03; ring.position.y = 0.035;
   g.visible = false; scene.add(g);
@@ -197,11 +197,11 @@ export function createHill(scene, radius) {
       if (on && !g.visible) g.position.set(state.hillX, 0, state.hillZ);
       g.visible = on;
       if (!on) return;
-      const k = Math.min(1, dt * 4);
-      g.position.x += (state.hillX - g.position.x) * k;
-      g.position.z += (state.hillZ - g.position.z) * k;
+      if (g.position.x !== state.hillX || g.position.z !== state.hillZ) { g.position.set(state.hillX, 0, state.hillZ); t = 0; }
       t += dt;
-      // blink in the last 3 seconds before it moves
+      // pulse in when it appears, blink in the last 3 seconds before it moves
+      const appear = Math.min(1, t / 0.6);
+      g.scale.setScalar(0.6 + 0.4 * appear);
       ring.material.opacity = state.hillIn < 3 ? 0.4 + 0.45 * Math.abs(Math.sin(t * 8)) : 0.85;
     },
     get position() { return g.position; },
@@ -229,7 +229,7 @@ export function createExits(scene, exits, city) {
   return { sync(state) { g.visible = state?.mode === 'evac' && (state.phase === 'playing' || state.phase === 'countdown'); } };
 }
 
-// ── Points race bonus crate: a gold-striped box that bobs and spins ──
+// ── Save the City! bonus crate: a gold-striped box that bobs and spins ──
 export function createCrate(scene) {
   const g = new THREE.Group();
   const box = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42),

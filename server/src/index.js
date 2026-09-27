@@ -8,6 +8,8 @@ import { TUNING } from '../../shared/tuning.js';
 
 // Test hook: shorter rounds for automated checks (never set in production).
 if (process.env.KQ_MATCH_SECONDS) TUNING.matchSeconds = Number(process.env.KQ_MATCH_SECONDS);
+// Browser checks run on a slow software renderer; don't let their idle tabs go AFK.
+if (process.env.KQ_TEST) TUNING.afkSeconds = 600;
 
 // When the client has been built (client/dist), this server also hosts it,
 // so one Render service = one URL to share for playtests.

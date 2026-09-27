@@ -7,13 +7,13 @@
 //  Every number comes from shared/tuning.js.
 //
 //  Modes (state.mode):
-//   'race'  Points race — one kaiju vs tanks. Kaiju scores destruction and
+//   'race'  Save the City! — one kaiju vs tanks. Kaiju scores destruction and
 //           crushed tanks; tanks score repairs and kaiju kills. The kaiju
 //           respawns when killed. A neutral crate tilts scoring. Highest
 //           score at the buzzer wins.
-//   'koth'  King of the Hill (beta) — everyone is a kaiju. Smash buildings
+//   'koth'  King of the Hill — everyone is a kaiju. Smash buildings
 //           (×3 inside the moving hill) and each other. Highest score wins.
-//   'evac'  Evacuation (beta) — kaiju vs tanks over a fixed crowd of
+//   'evac'  Evacuation — kaiju vs tanks over a fixed crowd of
 //           civilians. First side past half the crowd (stomped vs escaped)
 //           wins. Roadblocks are sturdy and unlimited.
 // ─────────────────────────────────────────────────────────────
@@ -26,8 +26,8 @@ const T = TUNING;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
 export const MODES = ['race', 'koth', 'evac'];
-export const MODE_NAMES = { race: 'Points race', koth: 'King of the Hill', evac: 'Evacuation' };
-export const BETA_MODES = new Set(['koth', 'evac']);
+export const MODE_NAMES = { race: 'Save the City!', koth: 'King of the Hill', evac: 'Evacuation' };
+export const BETA_MODES = new Set();   // modes to label (beta) in the picker
 export const KAIJU_SEATS = 1 + TUNING.maxTanks;   // King of the Hill: everyone is a kaiju
 
 // Plain-object factories (tests + offline sandbox). The server passes schema ones.
@@ -39,7 +39,7 @@ export const plainMake = {
   civilian: () => ({ x: 0, z: 0, rot: 0, moving: false, look: 0 }),
   state: () => ({ phase: 'lobby', clock: 0, winner: '', kaijuScore: 0, tankScore: 0, kaijuSpeed: 0,
     players: new Map(), buildingHp: [], roadblocks: new Map(),
-    mode: '', hillX: 0, hillZ: 0, hillIn: 0,
+    mode: '', hillX: 0, hillZ: 0, hillIn: 0, target: 0,
     evacuated: 0, stomped: 0, civilians: new Map(),
     bonus: '', bonusIn: 0, healIn: 0, crateOn: false, crateX: 0, crateZ: 0, crateIn: 0 }),
 };
@@ -96,7 +96,12 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   // Crate tilt: the side holding the bonus scores × crateFavor, the other × crateOppose.
   const tilt = (side) => !state.bonus ? 1 : state.bonus === side ? T.crateFavor : T.crateOppose;
   function kaijuPoints(p, pts) {
-    if (koth()) { p.score += pts; return pts; }
+    if (koth()) {
+      p.score += pts;
+      // first to the target wins outright
+      if (state.target > 0 && p.score >= state.target && state.phase === 'playing') endRound(idOf(p));
+      return pts;
+    }
     const got = pts * tilt('kaiju');
     state.kaijuScore += got; p.score += got;
     return got;
@@ -333,7 +338,12 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     clearRoundState();
     rescale();
     for (const k of kaijus()) k.hp = k.maxHp;
-    state.phase = 'playing'; state.clock = T.matchSeconds;
+    state.phase = 'playing'; state.clock = T.matchSeconds; state.target = 0;
+    if (koth()) {   // King of the Hill scales with the crowd: time and target per player
+      const players = state.players.size;
+      state.clock = T.kothSecondsPerPlayer * players;
+      state.target = T.kothPointsPerPlayer * players;
+    }
     emit('start', { mode: state.mode });
     if (koth()) moveHill();
   }
@@ -453,21 +463,21 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   // ── Tanks ──────────────────────────────────────────────────
-  // Drop a roadblock on the street tile behind the tank (or its own tile),
+  // Drop a roadblock on the street tile in front of the tank (or its own tile),
   // turned to run across the road.
   function dropRoadblock(p, id) {
     if (p.blockIn > 0 || !p.alive) return false;
-    const bx = -Math.sin(p.rot), bz = -Math.cos(p.rot);
-    const back = Math.abs(bx) > Math.abs(bz) ? [Math.sign(bx), 0] : [0, Math.sign(bz)];
+    const fx = Math.sin(p.rot), fz = Math.cos(p.rot);
+    const ahead = Math.abs(fx) > Math.abs(fz) ? [Math.sign(fx), 0] : [0, Math.sign(fz)];
     const here = [Math.round(p.x), Math.round(p.z)];
     const evac = state.mode === 'evac';
-    for (const [tx, tz] of [[here[0] + back[0], here[1] + back[1]], here]) {
+    for (const [tx, tz] of [[here[0] + ahead[0], here[1] + ahead[1]], here]) {
       if (city.tiles[tz]?.[tx] !== '#' || state.roadblocks.has(rbKey(tx, tz))) continue;
       if (kaijus().some(k => k.alive && Math.abs(k.x - tx) < 0.5 + T.kaijuRadius && Math.abs(k.z - tz) < 0.5 + T.kaijuRadius)) continue;
       const rb = make.roadblock();
       rb.x = tx; rb.z = tz; rb.slot = p.slot;
       rb.hits = evac ? T.evacRoadblockHits : T.roadblockHits;
-      rb.rot = back[0] !== 0 ? Math.PI / 2 : 0;
+      rb.rot = ahead[0] !== 0 ? Math.PI / 2 : 0;   // across the road the tank is on
       state.roadblocks.set(rbKey(tx, tz), rb);
       const list = rbOrder.get(id) || [];
       list.push(rbKey(tx, tz));
@@ -513,7 +523,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     emit('tankDown', { id, by: kid, x: p.x, z: p.z, points: pts });
   }
 
-  // ── Bonus crate (Points race) ──────────────────────────────
+  // ── Bonus crate (Save the City!) ──────────────────────────────
   let cratePath = null, crateReplan = 0;
   function spawnCrate() {
     const k = kaiju(), ts = tanks().filter(t => t.alive);
@@ -563,7 +573,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   // ── King of the Hill ───────────────────────────────────────
-  // A street tile with enough standing buildings around it, away from the last hill.
+  // The zone lands on the street spot (with enough standing buildings around it)
+  // closest to whoever is furthest behind on the leaderboard — a catch-up rule.
   function moveHill() {
     const standing = (x, z) => {
       let c = 0;
@@ -573,16 +584,21 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       }
       return c;
     };
-    const far = streets.filter(s => Math.hypot(s.x - state.hillX, s.z - state.hillZ) >= T.hillRadius * 2);
-    const pool = far.length ? far : streets;
-    let spot = null;
-    for (let tries = 0; tries < 60 && !spot; tries++) {
-      const s = pick(pool);
-      if (standing(s.x, s.z) >= T.hillMinBuildings) spot = s;
+    const ks = kaijus();
+    let trailer = null;
+    if (ks.length) {
+      const low = Math.min(...ks.map(k => k.score));
+      trailer = pick(ks.filter(k => k.score === low));   // ties: any of them
     }
-    spot ||= pick(pool);
+    const pool = streets.filter(s => Math.hypot(s.x - state.hillX, s.z - state.hillZ) >= 1 && standing(s.x, s.z) >= T.hillMinBuildings);
+    let spot;
+    if (pool.length && trailer) {
+      const d = (s) => Math.hypot(s.x - trailer.x, s.z - trailer.z);
+      const best = Math.min(...pool.map(d));
+      spot = pick(pool.filter(s => d(s) <= best + 1));
+    } else spot = pick(pool.length ? pool : streets);
     state.hillX = spot.x; state.hillZ = spot.z; state.hillIn = T.hillMoveSeconds;
-    emit('hill', { x: spot.x, z: spot.z });
+    emit('hill', { x: spot.x, z: spot.z, near: trailer ? idOf(trailer) : '' });
   }
 
   // ── Evacuation ─────────────────────────────────────────────

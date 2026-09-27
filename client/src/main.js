@@ -3,7 +3,7 @@ import { Client } from '@colyseus/sdk';
 import { TUNING } from '../../shared/tuning.js';
 import { buildCity, fadeOccluders } from './city.js';
 import { loadUnitModels, createUnit, colourHex, kaijuHex, TANK_COLOURS } from './units.js';
-import { moveVector, onInputChange, pollGamepad, usingGamepad, keyNames } from './input.js';
+import { moveVector, onInputChange, pollGamepad, usingGamepad, keyNames, setPadUiMode } from './input.js';
 import { createLocalRoom } from './localroom.js';
 import { initFx, createBuildingDamage, createRoadblocks, createHill, createExits, createCrate } from './fx.js';
 import { initAudio, play as sfx, loop as sfxLoop, setListener, toggleMute, isMuted } from './audio.js';
@@ -183,7 +183,7 @@ function onFx(e) {
       if (city) {
         const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 1.6 * b.size); fx.blast(b.cx, b.cz, 0.8 * b.size, 0x9a8f80);
         sfx('building-destroyed', 1, { x: b.cx, z: b.cz });
-        if (e.hill && e.id === room.sessionId) hud.toast(`HILL BONUS ×${TUNING.hillMultiplier}  ★ ${Math.round(e.points)}`, 2);
+        if (e.hill && e.id === room.sessionId) hud.toast(`ZONE BONUS ×${TUNING.hillMultiplier}  ★ ${Math.round(e.points)}`, 2);
       }
       break;
     case 'tankDown': fx.blast(e.x, e.z, 1.2); sfx('tank-dead', 1, { x: e.x, z: e.z }); break;
@@ -211,7 +211,8 @@ function onFx(e) {
       hud.toast(`KAIJU DOWN · tanks +${Math.round(e.points)} · repairs ×${TUNING.deathRepairBoost} for ${TUNING.deathRepairSeconds}s`, 4);
       break;
     case 'kaijuUp': units.get(e.id)?.view.revive(); break;
-    case 'crateSpawn': hud.toast('A bonus crate dropped. Grab it to tilt the scoring!', 3); sfx('roadblock-placed', 0.8, { x: e.x, z: e.z }); break;
+    case 'hill': if (room.state.phase === 'playing') { sfx('red-alert', 1); hud.toast('The red zone moved!', 2); } break;
+    case 'crateSpawn': hud.toast('A bonus crate dropped. Grab it to tilt the scoring!', 3); sfx('red-alert', 1); break;
     case 'crate': {
       const mine = room.state.players.get(room.sessionId);
       const ours = mine && (e.side === 'kaiju') === (mine.role === 'kaiju');
@@ -260,6 +261,8 @@ function syncUnits(dt) {
     u.view.object.visible = p.role === 'kaiju' || p.alive;
     follow(u, p, dt);
     u.view.update(dt, p.moving);
+    if (id === room.sessionId) u.view.setCharge(p.role === 'kaiju'
+      ? 1 - p.boostIn / TUNING.boostCooldown : 1 - p.blockIn / TUNING.roadblockCooldown, dt);
   });
   // Evacuation civilians
   const seenCiv = new Set();
@@ -290,7 +293,7 @@ function updateSideHud(me) {
   const mode = room.state.mode;
   const help = me.role === 'kaiju'
     ? `${k.move} move · ${k.smash} smash · ${k.boost} boost<br>` + (mode === 'koth'
-      ? `Smash buildings (×${TUNING.hillMultiplier} in the gold ring) and other kaiju`
+      ? `Smash buildings (×${TUNING.hillMultiplier} in the red zone) and other kaiju`
       : `Walk into tanks${mode === 'evac' ? ' & civilians' : ''} to crush them`)
     : `${k.move} move · turret fires on its own (not through buildings)<br>${k.block} drop roadblock<br>` +
       (mode === 'race' ? 'Repair damaged buildings and kill the kaiju for points' : 'Drive near damaged buildings to repair them');
@@ -323,6 +326,19 @@ function myRole() { return room?.state?.players?.get(room.sessionId)?.role; }
 // tank roadblock. Kaiju boost = right face button (1), RB/R1 (5) or RT/R2 (7).
 function gamepadButtons() {
   const pressed = pollGamepad();
+  // Menus (join screen, lobby, end screen): the D-pad moves between buttons and
+  // A (✕ on PlayStation) presses the highlighted one. The stick still moves you.
+  const menu = hud.padMenuOpen();
+  setPadUiMode(menu);
+  if (menu) {
+    for (const b of pressed) {
+      if (b >= 12 && b <= 15) hud.padNav(['up', 'down', 'left', 'right'][b - 12]);
+      else if (b === 0) hud.padAccept();
+      else if (b === 9 && room && !room.offline && room.state.phase === 'lobby') room.send('ready', { ready: !room.state.players.get(room.sessionId)?.ready });
+    }
+    return;
+  }
+  hud.padNav(null);
   if (!room || !pressed.length) return;
   const tank = myRole() === 'tank';
   for (const b of pressed) {
@@ -386,11 +402,31 @@ function updateSound() {
   const myTank = me.role === 'tank' && me.alive && live;
   sfxLoop('tank-moving', myTank && me.moving ? 1 : 0);
   sfxLoop('building-repair', myTank && me.repairing ? 1 : 0);
+  // Evacuation: a crowd murmur that swells the more civilians are around you
+  let crowd = 0;
+  if (st.mode === 'evac' && st.phase === 'playing') {
+    const mine = units.get(room.sessionId)?.display || camTarget;
+    st.civilians.forEach(c => { if (Math.hypot(c.x - mine.x, c.z - mine.z) < TUNING.crowdHearing) crowd++; });
+    crowd = 0.08 + 0.92 * Math.min(1, crowd / TUNING.crowdFull);
+  }
+  sfxLoop('crowd-shouting', crowd);
+  // rustling leaves: the nearest unit pushing through a park
+  let leaves = null, leavesD = Infinity;
+  if (city) st.players.forEach((p, id) => {
+    if (!p.moving || !p.alive) return;
+    const bid = city.owner[Math.round(p.z)]?.[Math.round(p.x)];
+    if (bid === undefined || bid < 0 || city.buildings[bid].kind !== 'park') return;
+    const u = units.get(id); if (!u) return;
+    const d = Math.hypot(u.display.x - camTarget.x, u.display.z - camTarget.z);
+    if (d < leavesD) { leavesD = d; leaves = u; }
+  });
+  sfxLoop('trees-rustling', leaves && live ? 1 : 0, leaves?.display);
 }
 
 // ── Loop ───────────────────────────────────────────────────
 const timer = new THREE.Timer();
 function frame(ts) {
+  window.__kqFrame = (window.__kqFrame || 0) + 1;   // for automated checks
   timer.update(ts);
   const dt = Math.min(timer.getDelta(), 0.1);
   gamepadButtons();
