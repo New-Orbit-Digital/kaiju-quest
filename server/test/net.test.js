@@ -19,7 +19,7 @@ test('two clients over the network: roles, sync, countdown, combat events', asyn
     assert.equal(a.state.players.get(a.sessionId).role, 'kaiju');
     assert.equal(b.state.players.get(b.sessionId).role, 'tank');
     assert.equal(b.state.players.get(b.sessionId).mobile, true);
-    assert.equal(b.state.players.get(b.sessionId).soldiers.length, T.soldiersPerTank);
+    assert.equal(b.state.mode, T.defaultMode);
     assert.ok(Math.abs(a.state.kaijuSpeed - kaijuSpeedFor(2)) < 1e-6);
     assert.equal(a.state.buildingHp.length > 100, true);
     assert.equal(b.state.players.get(a.sessionId).name, 'Kay');

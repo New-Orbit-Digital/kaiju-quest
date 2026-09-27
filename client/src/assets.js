@@ -1,4 +1,4 @@
-// One place that loads .glb files. Normally fetches from ./assets/...;
+// One place that loads .glb and sound files. Normally fetches from ./assets/...;
 // in the offline sandbox build every file is embedded (base64) in the
 // page, because artifact pages can't fetch anything.
 import * as THREE from 'three';
@@ -31,4 +31,13 @@ export function loadGLB(url) {
     return new Promise((res, rej) => loader.parse(b64ToBuffer(e[k]), dir, res, rej));
   }
   return loader.loadAsync(url);
+}
+
+// Raw bytes of a sound file (embedded in the sandbox, fetched otherwise).
+export async function loadBytes(url) {
+  const e = embedded(), k = key(url);
+  if (e && e[k]) return b64ToBuffer(e[k]);
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.arrayBuffer();
 }

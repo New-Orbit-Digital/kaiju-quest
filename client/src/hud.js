@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { TUNING } from '../../shared/tuning.js';
 import { colourHex } from './units.js';
 import { keyNames } from './input.js';
+import { MODES, MODE_NAMES, BETA_MODES } from '../../shared/game.js';
 
 const CSS = `
 [hidden] { display: none !important; }
@@ -15,6 +16,23 @@ const CSS = `
 #kq-top .hp b { position: absolute; inset: 0; text-align: center; font: 700 10px/14px system-ui, sans-serif; color: #fff; letter-spacing: .04em; }
 #kq-top .clock { font-variant-numeric: tabular-nums; font-size: 18px; min-width: 52px; text-align: center; }
 #kq-top .score { font-variant-numeric: tabular-nums; color: #7dff8a; }
+#kq-top .extra { font-variant-numeric: tabular-nums; color: #f5b82e; }
+.kq-modes { display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
+.kq-modes button { flex: 1; min-width: 88px; border: 1px solid #3a4558; background: #1a2130; color: #cfd6e0; border-radius: 6px;
+  padding: 8px 6px; cursor: pointer; font: 700 12px/1.2 system-ui, sans-serif; letter-spacing: .02em; }
+.kq-modes button.on { background: #f5b82e; border-color: #f5b82e; color: #141a24; }
+.kq-modes button i { display: block; font: 600 10px/1 system-ui, sans-serif; font-style: normal; opacity: .75; margin-top: 3px; }
+.kq-modes-label { font: 800 11px/1 system-ui, sans-serif; letter-spacing: .08em; color: #a9b4c2; margin: 0 0 6px; }
+#kq-end .card { pointer-events: auto; }
+#kq-end .kq-modes { margin: 14px 0 0; }
+#kq-mute { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 6; width: 40px; height: 40px;
+  border-radius: 50%; border: 0; background: rgba(12,16,24,.78); color: #eef2f6; font: 700 16px/1 system-ui, sans-serif; cursor: pointer; }
+.kq-mobile #kq-mute { bottom: auto; top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; width: 34px; height: 34px; font-size: 14px; }
+#kq-hillarrow { position: fixed; width: 0; height: 0; z-index: 5; pointer-events: none; }
+#kq-hillarrow::before { content: ''; position: absolute; left: -16px; top: -14px; border-left: 28px solid #f5b82e;
+  border-top: 14px solid transparent; border-bottom: 14px solid transparent; filter: drop-shadow(0 0 4px rgba(0,0,0,.8)); }
+#kq-hillarrow span { position: absolute; left: -40px; top: 16px; width: 80px; text-align: center; color: #fff;
+  font: 700 11px/1 system-ui, sans-serif; text-shadow: 0 1px 3px #000; }
 #kq-banner { position: fixed; left: 50%; top: 32%; transform: translate(-50%,-50%); text-align: center; pointer-events: none;
   color: #fff; font: 800 28px/1.15 system-ui, sans-serif; text-shadow: 0 2px 10px rgba(0,0,0,.7); z-index: 6; max-width: calc(100% - 32px); }
 #kq-banner small { display: block; font: 600 15px/1.4 system-ui, sans-serif; opacity: .85; margin-top: 6px; }
@@ -107,7 +125,10 @@ export function createHud({ mobile }) {
   const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
   if (mobile) document.documentElement.classList.add('kq-mobile');
   const el = (html) => { const d = document.createElement('div'); d.innerHTML = html; const n = d.firstElementChild; document.body.appendChild(n); return n; };
-  const top = el(`<div id="kq-top" hidden><div class="hp"><i></i><b></b></div><div class="clock"></div><div class="score"></div></div>`);
+  const top = el(`<div id="kq-top" hidden><div class="hp"><i></i><b></b></div><div class="clock"></div><div class="score"></div><div class="extra"></div></div>`);
+  const hillArrow = el(`<div id="kq-hillarrow" hidden><span>HILL</span></div>`);
+  const muteBtn = el(`<button id="kq-mute" type="button" title="Sound on/off (M)">🔊</button>`);
+  let endSig = '';
   const banner = el(`<div id="kq-banner" hidden></div>`);
   const end = el(`<div id="kq-end" hidden><div class="card"></div></div>`);
   const ability = el(`<div id="kq-ability" hidden><span></span><div class="bar"><i></i></div></div>`);
@@ -133,14 +154,37 @@ export function createHud({ mobile }) {
   const esc = (t) => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   let toastTimer = null;
 
+  // Mode picker (lobby + end screen). Anyone can change it.
+  const modeBar = (current) => `<div class="kq-modes">` + MODES.map(m =>
+    `<button type="button" data-mode="${m}" class="${m === current ? 'on' : ''}">${MODE_NAMES[m]}${BETA_MODES.has(m) ? '<i>beta</i>' : '<i>&nbsp;</i>'}</button>`).join('') + `</div>`;
+  const wireModes = (root) => root.querySelectorAll('[data-mode]').forEach(bt =>
+    bt.addEventListener('click', () => handlers.mode?.(bt.dataset.mode)));
+  // Point an edge arrow at an off-screen spot; hides it when the spot is on screen.
+  function pointEdge(node, camera, x, y, z) {
+    const p = project(camera, x, y, z);
+    if (p.on) { node.hidden = true; return; }
+    const cx = innerWidth / 2, cy = innerHeight / 2;
+    const dx = p.sx - cx, dy = p.sy - cy;
+    const pad = 36, sx = (cx - pad) / Math.abs(dx || 1e-6), sy = (cy - pad) / Math.abs(dy || 1e-6);
+    const sc = Math.min(sx, sy);
+    node.hidden = false;
+    node.style.left = `${cx + dx * sc}px`; node.style.top = `${cy + dy * sc}px`;
+    node.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+    node.querySelector('span').style.transform = `rotate(${-Math.atan2(dy, dx)}rad)`;
+  }
+
   return {
+    onMute(fn, muted) {
+      muteBtn.textContent = muted ? '🔇' : '🔊';
+      muteBtn.addEventListener('click', () => { const m = fn(); muteBtn.textContent = m ? '🔇' : '🔊'; muteBtn.blur(); });
+    },
+    setMuted(m) { muteBtn.textContent = m ? '🔇' : '🔊'; },
     // Name entry before joining (remembered on this device).
     askName() {
       let saved = '';
       try { saved = localStorage.getItem('kq-name') || ''; } catch {}
       return new Promise((resolve) => {
         const card = el(`<div id="kq-pick"><form class="card"><h2>KAIJU QUEST</h2>
-          <div>Your name, so everyone can tell who's who.</div>
           <input id="kq-name" maxlength="16" autocomplete="nickname" placeholder="Your name" />
           <div class="row"><button class="k" type="submit">JOIN</button></div></form></div>`);
         const input = card.querySelector('#kq-name');
@@ -156,7 +200,7 @@ export function createHud({ mobile }) {
       });
     },
     // Lobby actions: { ready(bool), role('kaiju'|'tank'), kick(id) }
-    onLobby(h) { handlers = h; },
+    onLobby(h) { handlers = { ...handlers, ...h }; },
     toast(text, seconds = 7) {
       toastEl.textContent = text; toastEl.hidden = false;
       (window.__kqToasts ||= []).push(text); // record for automated checks
@@ -176,7 +220,7 @@ export function createHud({ mobile }) {
         rows.push({ id, name: p.name, role: p.role, slot: p.slot, ready: p.ready, afk: p.afk, mobile: p.mobile, bot: p.bot });
       });
       rows.sort((a, b) => (a.role === 'kaiju' ? -1 : 0) - (b.role === 'kaiju' ? -1 : 0) || a.slot - b.slot);
-      const sig = JSON.stringify([state.phase, Math.ceil(state.clock), rows, myId]);
+      const sig = JSON.stringify([state.phase, Math.ceil(state.clock), rows, myId, state.mode]);
       if (sig === lobbySig) return;
       lobbySig = sig;
       const canKaiju = !me.mobile && me.role !== 'kaiju' && (!hasK || kaijuAfk);
@@ -186,7 +230,8 @@ export function createHud({ mobile }) {
         : !hasK ? 'Needs a kaiju (desktop only).'
         : !tanks ? 'Needs at least one tank.'
         : 'Starts when everyone is ready. AFK players don\'t hold it up.';
-      lobby.innerHTML = `<h3>LOBBY</h3><div class="sub">${esc(status)}</div><ul>` + rows.map(r => {
+      lobby.innerHTML = `<h3>LOBBY</h3><div class="sub">${esc(status)}</div>` +
+        (state.phase === 'lobby' ? `<div class="kq-modes-label">GAME MODE</div>${modeBar(state.mode)}` : '') + `<ul>` + rows.map(r => {
         const col = r.role === 'kaiju' ? '#7dff8a' : colourHex(r.slot);
         const st = r.afk ? '<span class="st afk">AFK</span>' : r.ready ? '<span class="st ready">READY</span>' : '<span class="st wait">NOT READY</span>';
         const kick = r.id !== myId ? `<button class="kick" type="button" data-kick="${esc(r.id)}" title="Remove from the lobby">✕</button>` : '<span></span>';
@@ -200,6 +245,7 @@ export function createHud({ mobile }) {
         `</div><div class="bots">` +
         `<button type="button" data-bot="tank" ${tanks < TUNING.maxTanks ? '' : 'disabled'}>+ BOT TANK</button>` +
         `<button type="button" data-bot="kaiju" ${hasK ? 'disabled' : ''}>+ BOT KAIJU</button></div>`;
+      wireModes(lobby);
       lobby.querySelectorAll('[data-bot]').forEach(bt => bt.addEventListener('click', () => handlers.addBot?.(bt.dataset.bot)));
       lobby.querySelectorAll('[data-kick]').forEach(bt => bt.addEventListener('click', () => handlers.kick?.(bt.dataset.kick)));
       lobby.querySelectorAll('[data-act]').forEach(bt => bt.addEventListener('click', () => {
@@ -237,7 +283,13 @@ export function createHud({ mobile }) {
         top.querySelector('.hp b').textContent = `KAIJU ${Math.ceil(state.kaijuHp)} / ${state.kaijuMaxHp}`;
         top.querySelector('.clock').textContent = playing ? fmt(state.clock) : 'END';
         top.querySelector('.score').textContent = `★ ${state.kaijuScore}`;
+        top.querySelector('.extra').textContent = !playing ? ''
+          : state.mode === 'koth' ? `HILL MOVES ${Math.max(0, Math.ceil(state.hillIn))}s`
+          : state.mode === 'evac' ? `EVACUATED ${state.evacuated}/${TUNING.evacGoal}` : '';
       }
+      // gold arrow to the hill when it's off screen (everyone)
+      if (playing && state.mode === 'koth') pointEdge(hillArrow, camera, state.hillX, 0, state.hillZ);
+      else hillArrow.hidden = true;
 
       this.updateLobby(state, me, myId);
       this.updateTags(state, myId, camera, units);
@@ -250,8 +302,15 @@ export function createHud({ mobile }) {
         b = `Crushed!<small>Back in action in ${Math.max(1, Math.ceil(me.respawnIn))}</small>`;
       } else if (playing && state.clock > T0() - 2.5) {
         const k = keyNames();
-        b = me.role === 'kaiju' ? `SMASH!<small>${k.smash} next to a building or roadblock · walk into tanks and soldiers</small>`
-                                : `HUNT THE KAIJU<small>Turret fires on its own · ${k.boost} boost · ${k.block} roadblock · park by damaged buildings to repair</small>`;
+        const kaiju = me.role === 'kaiju';
+        b = state.mode === 'koth'
+          ? (kaiju ? `KING OF THE HILL<small>Buildings inside the gold ring score ×${TUNING.hillMultiplier} · it moves every ${TUNING.hillMoveSeconds}s</small>`
+                   : `KING OF THE HILL<small>The kaiju scores ×${TUNING.hillMultiplier} inside the gold ring · defend it · ${k.block} roadblock</small>`)
+          : state.mode === 'evac'
+          ? (kaiju ? `EVACUATION<small>Stomp fleeing civilians before ${TUNING.evacGoal} reach the green exits</small>`
+                   : `EVACUATION<small>Get ${TUNING.evacGoal} civilians to the green exits · keep the kaiju off them</small>`)
+          : kaiju ? `SMASH!<small>${k.smash} next to a building or roadblock · ${k.boost} boost · walk into tanks to crush them</small>`
+                  : `HUNT THE KAIJU<small>Turret fires on its own when it can see the kaiju · ${k.block} roadblock · park by damaged buildings to repair</small>`;
       }
       banner.hidden = !b; banner.innerHTML = b; banner.classList.toggle('big', big);
 
@@ -260,26 +319,39 @@ export function createHud({ mobile }) {
       if (!end.hidden) {
         const kaijuWon = state.winner === 'kaiju';
         const youWon = (me.role === 'kaiju') === kaijuWon;
-        end.querySelector('.card').innerHTML =
-          `<h2>${kaijuWon ? 'KAIJU WINS' : 'TANKS WIN'}</h2>` +
-          `<div>${youWon ? 'You won.' : 'You lost.'} ${kaijuWon ? 'The kaiju outlasted the clock.' : 'The kaiju went down.'}</div>` +
-          `<div class="pts">★ ${state.kaijuScore} kaiju points</div>` +
-          `<div>Next round in ${Math.max(0, Math.ceil(state.clock))}</div>`;
-      }
+        const why = kaijuWon ? 'The kaiju outlasted the clock.'
+          : state.mode === 'evac' && state.evacuated >= TUNING.evacGoal ? `${state.evacuated} civilians got out.` : 'The kaiju went down.';
+        const sig = JSON.stringify([state.winner, youWon, state.kaijuScore, Math.ceil(state.clock), state.mode, state.evacuated]);
+        if (sig !== endSig) {
+          endSig = sig;
+          const card = end.querySelector('.card');
+          card.innerHTML =
+            `<h2>${kaijuWon ? 'KAIJU WINS' : 'TANKS WIN'}</h2>` +
+            `<div>${youWon ? 'You won.' : 'You lost.'} ${why}</div>` +
+            `<div class="pts">★ ${state.kaijuScore} kaiju points</div>` +
+            (state.mode === 'evac' ? `<div>Evacuated ${state.evacuated} / ${TUNING.evacGoal}</div>` : '') +
+            `<div>Next round in ${Math.max(0, Math.ceil(state.clock))}</div>` +
+            `<div class="kq-modes-label" style="margin-top:14px">NEXT ROUND'S MODE</div>` + modeBar(state.mode).replace('kq-modes"', 'kq-modes" style="margin-top:0"');
+          wireModes(card);
+        }
+      } else endSig = '';
 
-      // ability meter (desktop; phones use the boost button)
+      // ability meter (desktop; phones use the BLOCK button)
       ability.hidden = !playing || mobile || (me.role === 'tank' && !me.alive);
       if (!ability.hidden) {
-        const kaijuSide = me.role === 'kaiju';
-        const left = kaijuSide ? me.strikeIn : me.boostIn;
-        const total = kaijuSide ? TUNING.strikeCooldown : TUNING.boostCooldown;
-        const ready = left <= 0;
-        ability.classList.toggle('ready', ready);
         const k = keyNames();
-        ability.querySelector('span').textContent = kaijuSide
-          ? (ready ? `${k.smash}  SMASH — ready` : `${k.smash}  SMASH`)
-          : (me.boosting ? 'BOOSTING' : ready ? `${k.boost}  BOOST — ready` : `${k.boost}  BOOST  ${Math.ceil(left)}s`) +
-            (me.blockIn > 0 ? `   ·   ${k.block}  BLOCK  ${Math.ceil(me.blockIn)}s` : `   ·   ${k.block}  BLOCK — ready`);
+        const secs = (v) => `${Math.ceil(v)}s`;
+        let text, left, total;
+        if (me.role === 'kaiju') {
+          text = (me.strikeIn <= 0 ? `${k.smash}  SMASH — ready` : `${k.smash}  SMASH`) + '   ·   ' +
+                 (me.boosting ? 'BOOSTING' : me.boostIn > 0 ? `${k.boost}  BOOST  ${secs(me.boostIn)}` : `${k.boost}  BOOST — ready`);
+          left = me.boostIn; total = TUNING.boostCooldown;
+        } else {
+          text = me.blockIn > 0 ? `${k.block}  ROADBLOCK  ${secs(me.blockIn)}` : `${k.block}  ROADBLOCK — ready`;
+          left = me.blockIn; total = TUNING.roadblockCooldown;
+        }
+        ability.classList.toggle('ready', left <= 0);
+        ability.querySelector('span').textContent = text;
         ability.querySelector('.bar i').style.width = `${(1 - left / total) * 100}%`;
       }
 

@@ -1,4 +1,4 @@
-// Kaiju, tank and soldier visuals (Quaternius CC0 models) with placeholder fallbacks.
+// Kaiju, tank and civilian visuals (Quaternius CC0 models) with placeholder fallbacks.
 import * as THREE from 'three';
 import { loadGLB } from './assets.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
@@ -22,19 +22,20 @@ const MODELS = {
     walk: 'TankArmature|Tank_Forward', idle: null,
     tintMaterial: 'Main',
   },
-  soldier: {
+  // Evacuation civilians: the Quaternius soldier with every weapon and the
+  // shoulder pads hidden, shirts tinted from CIVILIAN_COLOURS.
+  civilian: {
     url: './assets/units/soldier.glb',
     yaw: 0,                    // faces +z natively
-    fit: 'height', size: () => TUNING.soldierHeight,
-    walk: 'CharacterArmature|Run_Gun', idle: 'CharacterArmature|Idle',
-    shoot: 'CharacterArmature|Idle_Shoot', death: 'CharacterArmature|Death',
+    fit: 'height', size: () => TUNING.civilianHeight,
+    walk: 'CharacterArmature|Run', idle: 'CharacterArmature|Wave',
     tintMaterial: 'Character_Main',
-    // the model carries a whole armoury; keep the body + one rifle
-    keepMeshes: ['Body', 'Head', 'ShoulderPad.L', 'ShoulderPad.R', 'AK'],
+    keepMeshes: ['Body', 'Head'],
   },
 };
 
 export const TANK_COLOURS = [0x4f7cff, 0xf5a524, 0xe5484d, 0xa35cf0, 0x2fbf71, 0xffffff];
+const CIVILIAN_COLOURS = [0xe8d44d, 0xe07a5f, 0x81b29a, 0xf2cc8f, 0x9d8df1, 0x5fa8d3, 0xf28482, 0xcdb4db];
 export const colourHex = (slot) => '#' + TANK_COLOURS[slot % TANK_COLOURS.length].toString(16).padStart(6, '0');
 
 const sources = {};
@@ -63,7 +64,9 @@ function placeholder(role, colour) {
 
 // A drawn unit: `object` is positioned/rotated by game state.
 export function createUnit(role, slot, isMine) {
-  const colour = role === 'kaiju' ? 0x3e9c4a : TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length];
+  const colour = role === 'kaiju' ? 0x3e9c4a
+    : role === 'civilian' ? CIVILIAN_COLOURS[Math.abs(slot) % CIVILIAN_COLOURS.length]
+    : TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length];
   const outer = new THREE.Group();
   const m = MODELS[role];
   const src = sources[role];
@@ -98,7 +101,7 @@ export function createUnit(role, slot, isMine) {
 
     model.traverse(o => {
       if (!o.isMesh) return;
-      o.castShadow = TUNING.shadows && role !== 'soldier';
+      o.castShadow = TUNING.shadows && role !== 'civilian';
       o.frustumCulled = false; // skinned meshes cull badly after rescale
       if (m.tintMaterial && o.material?.name === m.tintMaterial) {
         o.material = o.material.clone();
@@ -169,6 +172,7 @@ export function createUnit(role, slot, isMine) {
       dead = true;
       if (m.death && actions[m.death]) { current = null; play(m.death, true); }
     },
-    revive() { dead = false; current = null; play(m.idle); },
+    revive() { dead = false; current = null; mixer?.stopAllAction(); play(m.idle); },
+    get dead() { return dead; },
   };
 }

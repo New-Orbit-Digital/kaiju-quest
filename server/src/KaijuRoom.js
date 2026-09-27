@@ -1,5 +1,5 @@
 import { Room } from 'colyseus';
-import { MatchState, Player, Soldier, Roadblock } from './schema.js';
+import { MatchState, Player, Civilian, Roadblock } from './schema.js';
 import { TUNING } from '../../shared/tuning.js';
 import { createGame } from '../../shared/game.js';
 import { createBots } from '../../shared/bots.js';
@@ -12,10 +12,11 @@ export class KaijuRoom extends Room {
     const state = new MatchState();
     state.phase = 'lobby'; state.clock = 0; state.winner = '';
     state.kaijuHp = 0; state.kaijuMaxHp = 0; state.kaijuScore = 0; state.kaijuSpeed = 0;
+    state.mode = ''; state.hillX = 0; state.hillZ = 0; state.hillIn = 0; state.evacuated = 0;
     this.setState(state);
     this.game = createGame({
       state: this.state,
-      make: { player: () => new Player(), soldier: () => new Soldier(), roadblock: () => new Roadblock() },
+      make: { player: () => new Player(), civilian: () => new Civilian(), roadblock: () => new Roadblock() },
       emit: (type, data) => this.broadcast('fx', { type, ...data }),
     });
 
@@ -28,9 +29,11 @@ export class KaijuRoom extends Room {
     this.onMessage('input', (client, msg) => this.game.input(client.sessionId, msg));
     this.onMessage('action', (client) => this.game.action(client.sessionId));
     this.onMessage('block', (client) => this.game.block(client.sessionId));
+    this.onMessage('boost', (client) => this.game.boost(client.sessionId));
     this.onMessage('ready', (client, msg) => this.game.setReady(client.sessionId, !!msg?.ready));
     this.onMessage('role', (client, msg) => this.game.setRole(client.sessionId, msg?.role));
     this.onMessage('name', (client, msg) => this.game.setName(client.sessionId, msg?.name));
+    this.onMessage('mode', (client, msg) => this.game.setMode(client.sessionId, String(msg?.mode || '')));
     // Anyone can remove another player from the lobby (for ghosts / old tabs).
     this.onMessage('kick', (client, msg) => {
       if (this.state.phase !== 'lobby' || msg?.id === client.sessionId) return;

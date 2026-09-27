@@ -124,3 +124,20 @@ export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked) {
   unit.rot = Math.atan2(mx, mz);
   return unit.x !== startX || unit.z !== startZ;
 }
+
+// Line of sight for tank shells. Walks the segment a→b and returns the first
+// point inside a standing building (the lot minus its sidewalk), or null if
+// the line is clear. blocks(id) → true if building id stops shells.
+export function firstHit(city, blocks, ax, az, bx, bz, step = 0.05) {
+  const len = Math.hypot(bx - ax, bz - az);
+  const n = Math.max(1, Math.ceil(len / step));
+  const m = (1 - TUNING.buildingFootprint) / 2;      // sidewalk around each building
+  for (let i = 1; i < n; i++) {
+    const x = ax + (bx - ax) * i / n, z = az + (bz - az) * i / n;
+    const id = city.owner[Math.round(z)]?.[Math.round(x)];
+    if (id === undefined || id < 0 || !blocks(id)) continue;
+    const b = city.buildings[id];
+    if (x > b.x - 0.5 + m && x < b.x + b.size - 0.5 - m && z > b.z - 0.5 + m && z < b.z + b.size - 0.5 - m) return { x, z, id };
+  }
+  return null;
+}

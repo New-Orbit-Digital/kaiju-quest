@@ -3,12 +3,16 @@
 //  All game logic, shared by the server (authoritative) and the
 //  offline sandbox. It works on a "state" object whose shape is the
 //  same whether it's a Colyseus schema or a plain JS object; `make`
-//  supplies the constructors for players and soldiers.
+//  supplies the constructors for players, roadblocks and civilians.
+//
+//  Modes (state.mode): 'ffa' Free for all · 'koth' King of the Hill (beta)
+//  · 'evac' Evacuation (beta). See GAME MODES in tuning.js.
 //  Every number comes from shared/tuning.js.
 // ─────────────────────────────────────────────────────────────
-import { TUNING, kaijuSpeedFor, kaijuMaxHpFor } from './tuning.js';
-import { parseCity, SPAWNS } from './map.js';
-import { stepUnit, tileWalkable } from './sim.js';
+import { TUNING, kaijuSpeedFor, kaijuMaxHpFor, boostMultiplierAt } from './tuning.js';
+import { parseCity, SPAWNS, EXITS } from './map.js';
+import { bfs, steer } from './path.js';
+import { stepUnit, firstHit } from './sim.js';
 
 const T = TUNING;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -16,14 +20,19 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 // Plain-object factories (tests + offline sandbox). The server passes schema ones.
 export const plainMake = {
   player: () => ({ name: '', ready: false, afk: false, role: '', slot: -1, mobile: false, x: 0, z: 0, rot: 0, moving: false,
-    alive: true, respawnIn: 0, boostIn: 0, boosting: false, strikeIn: 0, blockIn: 0, bot: false, soldiers: [] }),
-  roadblock: () => ({ x: 0, z: 0, hits: 0, slot: 0 }),
-  soldier: () => ({ x: 0, z: 0, rot: 0, alive: true, firing: false }),
+    alive: true, respawnIn: 0, boostIn: 0, boosting: false, strikeIn: 0, blockIn: 0, bot: false, repairing: false }),
+  roadblock: () => ({ x: 0, z: 0, hits: 0, slot: 0, rot: 0 }),
+  civilian: () => ({ x: 0, z: 0, rot: 0, moving: false, look: 0 }),
   state: () => ({ phase: 'lobby', clock: 0, winner: '', kaijuHp: 0, kaijuMaxHp: 0,
-    kaijuScore: 0, kaijuSpeed: 0, players: new Map(), buildingHp: [], roadblocks: new Map() }),
+    kaijuScore: 0, kaijuSpeed: 0, players: new Map(), buildingHp: [], roadblocks: new Map(),
+    mode: '', hillX: 0, hillZ: 0, hillIn: 0, evacuated: 0, civilians: new Map() }),
 };
 
 // Player names: printable, trimmed, max 16 characters.
+export const MODES = ['ffa', 'koth', 'evac'];
+export const MODE_NAMES = { ffa: 'Free for all', koth: 'King of the Hill', evac: 'Evacuation' };
+export const BETA_MODES = new Set(['koth', 'evac']);
+
 export function cleanName(n) {
   return String(n ?? '').replace(/[^\p{L}\p{N} _.'-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 16);
 }
@@ -43,8 +52,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   const city = parseCity();
   const inputs = new Map();        // id → {x, z}
   const actions = new Set();       // ids that pressed E since last tick
-  const trails = new Map();        // tank id → recent path points, newest first
-  const timers = new Map();        // id → { fire, root, soldierFire[] } (server-only, not synced)
+  const timers = new Map();        // id → { fire, root, boostT } (server-only, not synced)
   const lastActive = new Map();    // id → game time of last key press / stick move
   let now = 0;
   const streets = [];
@@ -58,14 +66,17 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   const rbKey = (x, z) => `${x},${z}`;
   const blocked = (tx, tz) => state.roadblocks.has(rbKey(tx, tz));
   const rbOrder = new Map();       // tank id → roadblock keys, oldest first
-  const blockActions = new Set();  // ids that pressed SHIFT / BLOCK since last tick
+  const blockActions = new Set();  // ids that pressed SPACE / BLOCK since last tick (tanks)
+  const boostActions = new Set();  // ids that pressed SHIFT since last tick (kaiju)
+  // Standing buildings stop tank shells (parks and rubble don't).
+  const blocksShots = (id) => city.buildings[id].kind !== 'park' && state.buildingHp[id] > 0;
   const repairFx = new Map();      // tank id → seconds until next repair effect
 
   const kaiju = () => { for (const p of state.players.values()) if (p.role === 'kaiju') return p; return null; };
   const tanks = () => [...state.players.values()].filter(p => p.role === 'tank');
   const idOf = (player) => { for (const [id, p] of state.players) if (p === player) return id; };
   const timer = (id) => {
-    if (!timers.has(id)) timers.set(id, { fire: 0, root: 0, soldierFire: new Array(T.soldiersPerTank).fill(0) });
+    if (!timers.has(id)) timers.set(id, { fire: 0, root: 0 });
     return timers.get(id);
   };
 
@@ -94,18 +105,11 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   function placeTank(p, id, spot) {
     p.x = spot.x; p.z = spot.z; p.rot = 0; p.moving = false;
-    p.alive = true; p.respawnIn = 0; p.boosting = false;
-    trails.set(id, [{ x: p.x, z: p.z }]);
-    while (p.soldiers.length) p.soldiers.pop();
-    for (let i = 0; i < T.soldiersPerTank; i++) {
-      const s = make.soldier();
-      s.x = p.x; s.z = p.z; s.rot = 0; s.alive = true; s.firing = false;
-      p.soldiers.push(s);
-    }
+    p.alive = true; p.respawnIn = 0; p.boosting = false; p.repairing = false;
   }
 
   function placeKaiju(p) {
-    p.x = SPAWNS.kaiju.x; p.z = SPAWNS.kaiju.z; p.rot = 0; p.moving = false; p.alive = true;
+    p.x = SPAWNS.kaiju.x; p.z = SPAWNS.kaiju.z; p.rot = 0; p.moving = false; p.alive = true; p.boosting = false;
   }
 
   // ── Joining / leaving ──────────────────────────────────────
@@ -163,8 +167,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   function leave(id) {
     state.players.delete(id);
-    inputs.delete(id); trails.delete(id); timers.delete(id); actions.delete(id); lastActive.delete(id);
-    blockActions.delete(id); repairFx.delete(id);
+    inputs.delete(id); timers.delete(id); actions.delete(id); lastActive.delete(id);
+    blockActions.delete(id); boostActions.delete(id); repairFx.delete(id);
     rescale();
   }
 
@@ -177,6 +181,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   };
   const action = (id) => { actions.add(id); touch(id); };
   const block = (id) => { blockActions.add(id); touch(id); };
+  const boost = (id) => { boostActions.add(id); touch(id); };
 
   // ── Lobby ──────────────────────────────────────────────────
   function setName(id, name) {
@@ -198,9 +203,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     if (role === 'kaiju') {
       if (p.mobile) return false;
       if (kaiju() && !takeOverIdleKaiju()) return false;
-      p.role = 'kaiju'; p.slot = -1; p.ready = false;
-      while (p.soldiers.length) p.soldiers.pop();
-      trails.delete(id);
+      p.role = 'kaiju'; p.slot = -1; p.ready = false; p.repairing = false;
       placeKaiju(p);
     } else if (role === 'tank') {
       const slot = freeSlot();
@@ -224,14 +227,33 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     return readyTanks > 0;
   }
 
+  // Pick the game mode: in the lobby, or on the end screen for the next round.
+  // force (offline sandbox only): switch now and restart the round.
+  function setMode(id, mode, force = false) {
+    if (id) touch(id);
+    if (!MODES.includes(mode) || mode === state.mode) return false;
+    if (!force && state.phase !== 'lobby' && state.phase !== 'ended') return false;
+    state.mode = mode;
+    emit('mode', { mode, by: state.players.get(id)?.name || '' });
+    if (force && state.phase !== 'lobby') resetRound();
+    return true;
+  }
+
   // ── Round flow ─────────────────────────────────────────────
   function clearRoadblocks() {
     for (const k of [...state.roadblocks.keys()]) state.roadblocks.delete(k);
     rbOrder.clear();
   }
 
+  function clearCivilians() {
+    for (const k of [...state.civilians.keys()]) state.civilians.delete(k);
+    civ.clear();
+  }
+
   function resetRound() {
     clearRoadblocks();
+    clearCivilians();
+    state.evacuated = 0;
     for (const b of city.buildings) state.buildingHp[b.id] = maxHpOf(b);
     state.kaijuScore = 0; state.winner = '';
     for (const [id, p] of state.players) {
@@ -302,9 +324,10 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const b = city.buildings[bid];
     emit('strike', { bid, hp, x: k.x, z: k.z });
     if (hp <= 0) {
-      const pts = T.buildingPoints[b.kind];
+      const inHill = state.mode === 'koth' && Math.hypot(b.cx - state.hillX, b.cz - state.hillZ) <= T.hillRadius;
+      const pts = T.buildingPoints[b.kind] * (inHill ? T.hillMultiplier : 1);
       state.kaijuScore += pts;
-      emit('destroyed', { bid, points: pts });
+      emit('destroyed', { bid, points: pts, hill: inHill });
     }
   }
 
@@ -321,6 +344,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       if (k && Math.abs(k.x - tx) < 0.5 + T.kaijuRadius && Math.abs(k.z - tz) < 0.5 + T.kaijuRadius) continue; // not on the kaiju
       const rb = make.roadblock();
       rb.x = tx; rb.z = tz; rb.hits = T.roadblockHits; rb.slot = p.slot;
+      rb.rot = back[0] !== 0 ? Math.PI / 2 : 0;   // barrier runs across the road the tank is on
       state.roadblocks.set(rbKey(tx, tz), rb);
       const list = rbOrder.get(id) || [];
       list.push(rbKey(tx, tz));
@@ -335,6 +359,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   // Tanks repair damaged (not destroyed) buildings within repairRange.
   function repairNear(p, id, dt) {
+    p.repairing = false;
     const r = T.repairRange, reach = Math.ceil(r) + 1;
     const cx = Math.round(p.x), cz = Math.round(p.z);
     const done = new Set();
@@ -347,6 +372,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       if (hp <= 0 || hp >= max) continue;
       if (Math.hypot(tx - p.x, tz - p.z) > r) continue;
       done.add(bid);
+      p.repairing = true;
       state.buildingHp[bid] = Math.min(max, hp + T.repairPerSecond * dt);
       const left = (repairFx.get(id) ?? 0) - dt;
       if (left <= 0) { emit('repair', { id, bid }); repairFx.set(id, 0.6); } else repairFx.set(id, left);
@@ -359,56 +385,96 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   }
 
   function killTank(p, id) {
-    p.alive = false; p.moving = false; p.boosting = false;
-    p.respawnIn = T.tankRespawnSeconds;
-    for (const s of p.soldiers) s.alive = false;   // squad respawns with the tank
+    p.alive = false; p.moving = false;
+    p.respawnIn = T.tankRespawnSeconds; p.repairing = false;
     state.kaijuScore += T.pointsTankKill;
     emit('tankDown', { id, x: p.x, z: p.z, points: T.pointsTankKill });
   }
 
-  // Soldiers walk the tank's recent path, in pairs behind it.
-  function recordTrail(id, p) {
-    const tr = trails.get(id) || [{ x: p.x, z: p.z }];
-    if (dist(tr[0], p) >= 0.08) { tr.unshift({ x: p.x, z: p.z }); if (tr.length > 80) tr.pop(); }
-    else { tr[0].x = p.x; tr[0].z = p.z; }
-    trails.set(id, tr);
-    return tr;
-  }
-  function trailPoint(tr, back) {
-    // walk `back` tiles along the trail; returns point + local direction
-    let left = back;
-    for (let i = 0; i < tr.length - 1; i++) {
-      const a = tr[i], b = tr[i + 1], seg = dist(a, b);
-      if (seg >= left) {
-        const t = left / seg;
-        return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, dx: a.x - b.x, dz: a.z - b.z };
+  // ── King of the Hill ───────────────────────────────────────
+  // A street tile with enough standing buildings around it, away from the last hill.
+  function moveHill() {
+    const standing = (x, z) => {
+      let n = 0;
+      for (const b of city.buildings) {
+        if (b.kind === 'park' || state.buildingHp[b.id] <= 0) continue;
+        if (Math.hypot(b.cx - x, b.cz - z) <= T.hillRadius) n++;
       }
-      left -= seg;
+      return n;
+    };
+    const far = streets.filter(s => Math.hypot(s.x - state.hillX, s.z - state.hillZ) >= T.hillRadius * 2);
+    const pool = far.length ? far : streets;
+    let pick = null;
+    for (let tries = 0; tries < 60 && !pick; tries++) {
+      const s = pool[Math.floor(rng() * pool.length)];
+      if (standing(s.x, s.z) >= T.hillMinBuildings) pick = s;
     }
-    const last = tr[tr.length - 1], prev = tr[tr.length - 2] || last;
-    return { x: last.x, z: last.z, dx: prev.x - last.x, dz: prev.z - last.z };
+    pick ||= pool[Math.floor(rng() * pool.length)];
+    state.hillX = pick.x; state.hillZ = pick.z; state.hillIn = T.hillMoveSeconds;
+    emit('hill', { x: pick.x, z: pick.z });
   }
-  function moveSoldiers(p, id, dt, k) {
-    const tr = recordTrail(id, p);
-    const maxStep = T.tankSpeed * T.boostMultiplier * 1.3 * dt;
-    p.soldiers.forEach((s, i) => {
-      if (!s.alive) return;
-      const row = Math.floor(i / 2) + 1, side = i % 2 ? 1 : -1;
-      const pt = trailPoint(tr, T.soldierSpacing * row);
-      const len = Math.hypot(pt.dx, pt.dz) || 1;
-      // perpendicular offset, but only where that spot is still street
-      let tx = pt.x + (-pt.dz / len) * T.soldierSpread * side;
-      let tz = pt.z + (pt.dx / len) * T.soldierSpread * side;
-      if (!tileWalkable(city, 'tank', Math.round(tx), Math.round(tz))) { tx = pt.x; tz = pt.z; }
-      const d = Math.hypot(tx - s.x, tz - s.z);
-      if (d > 0.001) {
-        const step = Math.min(d, maxStep);
-        s.x += (tx - s.x) / d * step; s.z += (tz - s.z) / d * step;
-        if (d > 0.02) s.rot = Math.atan2(tx - s.x, tz - s.z);
+
+  // ── Evacuation ─────────────────────────────────────────────
+  const civ = new Map();   // civilian id → { path, replanIn, panic } (server-only)
+  let civSeq = 0, civSpawnIn = 0;
+  const onExit = (x, z) => EXITS.some(e => e.x === x && e.z === z);
+  function civPath(c, k) {
+    const sx = Math.round(c.x), sz = Math.round(c.z);
+    const scared = k && dist(c, k) < T.civilianPanicRange;
+    const avoid = scared ? (x, z) => Math.hypot(x - k.x, z - k.z) < 2.2 : null;
+    return bfs(city, 'tank', sx, sz, onExit, { maxNodes: 2000, destroyed, avoid })
+        || bfs(city, 'tank', sx, sz, onExit, { maxNodes: 2000, destroyed });
+  }
+  function spawnCivilian(k) {
+    // step out of a standing building onto the street, away from the exits and the kaiju
+    for (let tries = 0; tries < 40; tries++) {
+      const s = streets[Math.floor(rng() * streets.length)];
+      if (EXITS.some(e => Math.hypot(e.x - s.x, e.z - s.z) < 6)) continue;
+      if (k && dist(s, k) < 4) continue;
+      const nextTo = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => {
+        const bid = city.owner[s.z + dz]?.[s.x + dx];
+        return bid !== undefined && bid >= 0 && city.buildings[bid].kind !== 'park' && state.buildingHp[bid] > 0;
+      });
+      if (!nextTo) continue;
+      const c = make.civilian();
+      c.x = s.x; c.z = s.z; c.rot = 0; c.moving = false; c.look = Math.floor(rng() * 1000);
+      const id = `c${++civSeq}`;
+      state.civilians.set(id, c);
+      civ.set(id, { path: civPath(c, k), replanIn: 1 + rng(), panic: false });
+      return;
+    }
+  }
+  function tickCivilians(dt, k) {
+    if ((civSpawnIn -= dt) <= 0 && state.civilians.size < T.civilianMaxAlive) {
+      civSpawnIn = T.civilianSpawnSeconds;
+      spawnCivilian(k);
+    }
+    for (const [id, c] of [...state.civilians]) {
+      const brain = civ.get(id);
+      if (!brain) continue;
+      const panic = !!(k && dist(c, k) < T.civilianPanicRange);
+      brain.replanIn -= dt;
+      if (!brain.path || (panic && (brain.replanIn <= 0 || !brain.panic))) {
+        brain.path = civPath(c, k); brain.replanIn = 0.8;
       }
-      s.firing = !!(k && state.phase === 'playing' && dist(s, k) <= T.soldierRange);
-      if (s.firing) s.rot = Math.atan2(k.x - s.x, k.z - s.z);
-    });
+      brain.panic = panic;
+      const inp = brain.path ? steer(c, brain.path) : { x: 0, z: 0 };
+      const walker = { role: 'tank', x: c.x, z: c.z, rot: c.rot, moving: c.moving };
+      c.moving = stepUnit(city, walker, inp, dt, T.civilianSpeed * (panic ? 1.25 : 1), T.civilianRadius, destroyed);
+      c.x = walker.x; c.z = walker.z; c.rot = walker.rot;
+      if (k && dist(c, k) < T.kaijuRadius + T.civilianRadius + T.stompReach) {   // stomped
+        state.civilians.delete(id); civ.delete(id);
+        state.kaijuScore += T.pointsCivilian;
+        emit('civilianDown', { x: c.x, z: c.z, points: T.pointsCivilian });
+        continue;
+      }
+      if (EXITS.some(e => Math.hypot(e.x - c.x, e.z - c.z) < 0.35)) {             // escaped
+        state.civilians.delete(id); civ.delete(id);
+        state.evacuated += 1;
+        emit('escaped', { x: c.x, z: c.z, count: state.evacuated });
+        if (state.evacuated >= T.evacGoal) { endRound('tanks'); return; }
+      }
+    }
   }
 
   // ── Tick ───────────────────────────────────────────────────
@@ -428,10 +494,13 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       else if (fromLobby && !lobbyReady()) state.phase = 'lobby'; // someone un-readied
       else if ((state.clock -= dt) <= 0) {
         state.phase = 'playing'; state.clock = T.matchSeconds; state.kaijuHp = state.kaijuMaxHp;
-        emit('start', {});
+        state.evacuated = 0; civSpawnIn = 0; clearCivilians();
+        emit('start', { mode: state.mode });
+        if (state.mode === 'koth') moveHill();
       }
     } else if (state.phase === 'playing') {
       if ((state.clock -= dt) <= 0) { state.clock = 0; endRound('kaiju'); }
+      else if (state.mode === 'koth' && (state.hillIn -= dt) <= 0) moveHill();
     } else if (state.phase === 'ended') {
       if ((state.clock -= dt) <= 0) resetRound();
     }
@@ -444,10 +513,17 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
         p.strikeIn = Math.max(0, p.strikeIn - dt);
         t.root = Math.max(0, t.root - dt);
         if (live && actions.has(id)) kaijuStrike(p, id);
-        const inp = t.root > 0 || state.phase === 'ended' ? null : inputs.get(id);
-        p.moving = stepUnit(city, p, inp, dt, state.kaijuSpeed, T.kaijuRadius, destroyed, blocked);
-      } else {
+        // boost: surge to boostPeak × speed, then ease back over boostSeconds
         p.boostIn = Math.max(0, p.boostIn - dt);
+        if (boostActions.has(id) && p.boostIn <= 0 && state.phase !== 'ended') {
+          p.boostIn = T.boostCooldown; t.boostT = 0; p.boosting = true;
+          emit('boost', { id });
+        }
+        if (p.boosting && (t.boostT += dt) >= T.boostSeconds) p.boosting = false;
+        const mult = p.boosting ? boostMultiplierAt(t.boostT) : 1;
+        const inp = t.root > 0 || state.phase === 'ended' ? null : inputs.get(id);
+        p.moving = stepUnit(city, p, inp, dt, state.kaijuSpeed * mult, T.kaijuRadius, destroyed, blocked);
+      } else {
         p.blockIn = Math.max(0, p.blockIn - dt);
         if (!p.alive) {
           if (state.phase === 'playing' || state.phase === 'ended') {
@@ -455,35 +531,21 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
           }
           continue;
         }
-        if (actions.has(id) && p.boostIn <= 0 && state.phase !== 'ended') {
-          p.boostIn = T.boostCooldown; t.boostLeft = T.boostSeconds; p.boosting = true;
-          emit('boost', { id });
-        }
-        t.boostLeft = Math.max(0, (t.boostLeft || 0) - dt);
-        p.boosting = t.boostLeft > 0;
-        const speed = T.tankSpeed * (p.boosting ? T.boostMultiplier : 1);
         const inp = state.phase === 'ended' ? null : inputs.get(id);
-        p.moving = stepUnit(city, p, inp, dt, speed, T.tankRadius, destroyed);
+        p.moving = stepUnit(city, p, inp, dt, T.tankSpeed, T.tankRadius, destroyed);
         if (live && blockActions.has(id)) dropRoadblock(p, id);
-        if (live) repairNear(p, id, dt);
-        moveSoldiers(p, id, dt, k);
+        if (live) repairNear(p, id, dt); else p.repairing = false;
       }
     }
-    actions.clear(); blockActions.clear();
+    actions.clear(); blockActions.clear(); boostActions.clear();
     if (!live || !k) return;
 
-    // Stomps: the kaiju walking into a tank or a soldier kills it.
+    if (state.mode === 'evac') { tickCivilians(dt, k); if (state.phase !== 'playing') return; }
+
+    // Stomps: the kaiju walking into a tank kills it.
     for (const p of tankList) {
       if (!p.alive) continue;
-      const id = idOf(p);
-      if (dist(k, p) < T.kaijuRadius + T.tankRadius + T.stompReach) { killTank(p, id); continue; }
-      p.soldiers.forEach((s, i) => {
-        if (s.alive && dist(k, s) < T.kaijuRadius + T.soldierRadius + T.stompReach) {
-          s.alive = false; s.firing = false;
-          state.kaijuScore += T.pointsSoldierKill;
-          emit('soldierDown', { id, i, x: s.x, z: s.z, points: T.pointsSoldierKill });
-        }
-      });
+      if (dist(k, p) < T.kaijuRadius + T.tankRadius + T.stompReach) killTank(p, idOf(p));
     }
 
     // Auto-fire: turrets lock on when the kaiju is in range.
@@ -493,21 +555,16 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       t.fire = Math.max(0, t.fire - dt);
       if (t.fire <= 0 && dist(p, k) <= T.tankRange) {
         t.fire = T.tankFireInterval;
+        // a building in the way takes the shell instead (no damage to it or the kaiju)
+        const hit = T.tankLineOfSight ? firstHit(city, blocksShots, p.x, p.z, k.x, k.z) : null;
+        if (hit) { emit('shot', { id, kind: 'tank', blocked: true, x: hit.x, z: hit.z }); continue; }
         emit('shot', { id, kind: 'tank' });
         damageKaiju(T.tankDamage);
       }
-      p.soldiers.forEach((s, i) => {
-        t.soldierFire[i] = Math.max(0, t.soldierFire[i] - dt);
-        if (s.alive && s.firing && t.soldierFire[i] <= 0 && state.phase === 'playing') {
-          t.soldierFire[i] = T.soldierFireInterval * (0.85 + rng() * 0.3); // stagger volleys
-          emit('shot', { id, kind: 'soldier', i });
-          damageKaiju(T.soldierDamage);
-        }
-      });
     }
   }
 
-  // Move a unit instantly (tests / dev). Tanks bring their squad along.
+  // Move a unit instantly (tests / dev).
   function teleport(id, x, z) {
     const p = state.players.get(id);
     if (!p) return;
@@ -515,7 +572,11 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     else { p.x = x; p.z = z; }
   }
 
+  if (!MODES.includes(state.mode)) state.mode = T.defaultMode;
   rescale();
-  return { city, join, leave, input, action, block, tick, destroyed, blocked, pickRespawn, teleport, maxHpOf,
-           setName, setReady, setRole, isAfk };
+  // Can a tank at a see the kaiju at b? (bots use this)
+  const canSee = (a, b) => !T.tankLineOfSight || !firstHit(city, blocksShots, a.x, a.z, b.x, b.z);
+
+  return { city, join, leave, input, action, block, boost, canSee, tick, destroyed, blocked, pickRespawn, teleport, maxHpOf,
+           setName, setReady, setRole, setMode, isAfk, moveHill };
 }

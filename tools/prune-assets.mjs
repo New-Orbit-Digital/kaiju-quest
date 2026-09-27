@@ -8,6 +8,7 @@ const keep = new Set(['units/trex.glb', 'units/tank.glb', 'units/soldier.glb']);
 for (const m of [...ROAD_MODELS, ...TREE_MODELS]) keep.add(`city/${m}.glb`);
 for (const b of parseCity().buildings) if (b.kind !== 'park') keep.add(`city/${modelForBuilding(b)}.glb`);
 for (const k of [...keep]) if (k.startsWith('city/')) keep.add(k.split('/').slice(0, 2).join('/') + '/Textures/colormap.png');
+for (const f of readdirSync(`${A}/sfx`)) keep.add(`sfx/${f}`);   // every sound effect
 const walk = (d) => readdirSync(d).flatMap(f => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : [p]; });
 let removed = 0;
 for (const f of walk(A)) { const k = f.slice(A.length + 1); if (!keep.has(k)) { rmSync(f); removed++; } }

@@ -1,6 +1,6 @@
 // Builds client/dist-sandbox/kaiju-sandbox.html: a single-file, offline
 // version of the game for a chat artifact (no server, assets embedded).
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { parseCity } from '../shared/map.js';
 import { modelForBuilding, ROAD_MODELS, TREE_MODELS } from '../client/src/cityplan.js';
@@ -10,6 +10,7 @@ const keys = new Set(['units/trex.glb', 'units/tank.glb', 'units/soldier.glb']);
 for (const m of [...ROAD_MODELS, ...TREE_MODELS]) keys.add(`city/${m}.glb`);
 for (const b of parseCity().buildings) if (b.kind !== 'park') keys.add(`city/${modelForBuilding(b)}.glb`);
 for (const k of [...keys]) if (k.startsWith('city/')) keys.add(k.split('/').slice(0, 2).join('/') + '/Textures/colormap.png');
+for (const f of readdirSync(A + 'sfx')) if (f.endsWith('.mp3')) keys.add(`sfx/${f}`);
 
 const out = {};
 let bytes = 0;

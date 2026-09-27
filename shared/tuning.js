@@ -27,25 +27,29 @@ export const TUNING = {
   strikeCooldown:     0.5,   // seconds between smashes (lower = faster)
   strikeRoot:         0.35,  // seconds the kaiju is stuck in place after a smash
 
-  // Kaiju STOMP — walking into a tank or soldier kills it instantly.
+  // Kaiju STOMP — walking into a tank (or a civilian in Evacuation) kills it instantly.
   stompReach:         0.05,  // extra reach beyond touching, tiles (0.3 = stomps from further)
 
   // Tank CANNON — fires on its own whenever the kaiju is in range.
-  tankDamage:         5,     // kaiju HP removed per shot
+  tankDamage:         8,     // kaiju HP removed per shot (was 5 + soldiers; soldiers removed)
   tankRange:          6,     // firing range, tiles
   tankFireInterval:   1.2,   // one shot every N seconds (lower = faster)
-
-  // Soldier RIFLES — each soldier fires on its own when the kaiju is in range.
-  soldierDamage:      1,  // kaiju HP removed per shot (each soldier)
-  soldierRange:       4,     // firing range, tiles
-  soldierFireInterval: 1.0,  // one shot every N seconds, per soldier (lower = faster)
+  tankLineOfSight:    true,  // buildings block shots: the shell hits the building instead
+                             // (false = shoot through everything, the old way)
 
   // ───────────────────────────────────────────────────────────────
   //  KAIJU
   // ───────────────────────────────────────────────────────────────
-  kaijuSpeed:         3,   // walking speed, tiles/sec (with no tanks in the game)
+  kaijuSpeed:         3,     // walking speed, tiles/sec (with no tanks in the game)
   kaijuSpeedPerTank:  0.05,  // +5% speed for each tank player (0.10 = +10%)
   kaijuHpPerTank:     100,   // kaiju health = this × number of tanks (no regen)
+
+  // Kaiju BOOST (SHIFT / controller RB): a charge that surges to full speed
+  // quickly, then eases back to normal walking speed by the end.
+  boostSeconds:       3,     // how long a boost lasts
+  boostPeak:          3,     // top speed = walking speed × this
+  boostRampSeconds:   0.3,   // time to reach top speed (then it slows back to × 1)
+  boostCooldown:      10,    // seconds before boost can be used again (counts from the press)
   viewTilesKaiju:     15,    // ZOOM: tiles visible top-to-bottom (bigger = zoomed out)
 
   kaijuLength:        2.5,   // how big the T-Rex is drawn, nose to tail (visual only)
@@ -57,17 +61,12 @@ export const TUNING = {
   viewTilesTank:      11,    // ZOOM on desktop: tiles visible top-to-bottom
   viewTilesMobile:    12,    // ZOOM on phones (portrait uses this across the width)
 
-  // Boost (SPACE / phone BOOST button)
-  boostMultiplier:    2.0,   // speed × this while boosting
-  boostSeconds:       1.5,   // how long a boost lasts
-  boostCooldown:      10,    // seconds before boost can be used again
-
   // Repair — a tank near a damaged building fixes it (not destroyed ones).
   repairRange:        1.5,   // tiles from the tank to the building
   repairPerSecond:    4,     // building HP restored per second, per tank
 
-  // Roadblocks (SHIFT / phone BLOCK button) — dropped behind the tank.
-  // They only block the kaiju; tanks and soldiers drive through.
+  // Roadblocks (SPACE / controller A / phone BLOCK button) — dropped behind the tank.
+  // They only block the kaiju; tanks and civilians go through.
   roadblockCooldown:  10,    // seconds between drops
   roadblockHits:      2,     // kaiju smashes needed to break one
   roadblockMaxPerTank: 3,    // dropping another removes that tank's oldest
@@ -80,26 +79,40 @@ export const TUNING = {
   tankLength:         0.8,   // how big a tank is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
-  //  SOLDIERS  (a squad follows each tank; they respawn with it)
-  // ───────────────────────────────────────────────────────────────
-  soldiersPerTank:    4,     // squad size
-  soldierSpacing:     0.35,  // how far behind the tank each pair walks
-  soldierSpread:      0.2,   // how far to the side of the tank's path they walk
-  soldierHeight:      0.2,  // how big a soldier is drawn (visual only)
-
-  // ───────────────────────────────────────────────────────────────
   //  BUILDINGS & POINTS  (points go to the kaiju)
   // ───────────────────────────────────────────────────────────────
   buildingHp:     { house: 20, commercial: 40, industrial: 40, tower: 80 },
   buildingPoints: { house: 10, commercial: 25, industrial: 25, tower: 60 },
   pointsTankKill:     50,    // kaiju walks into a tank
-  pointsSoldierKill:  10,    // kaiju walks into a soldier
+
+  // ───────────────────────────────────────────────────────────────
+  //  GAME MODES  (picked in the lobby or on the end screen)
+  //  'ffa' = Free for all · 'koth' = King of the Hill (beta) · 'evac' = Evacuation (beta)
+  // ───────────────────────────────────────────────────────────────
+  defaultMode:        'ffa',
+
+  // King of the Hill (beta): a zone that jumps around the city.
+  // Buildings the kaiju destroys inside it are worth more.
+  hillRadius:         3,     // size of the hill, tiles from its centre
+  hillMoveSeconds:    15,    // the hill moves to a new spot every N seconds
+  hillMultiplier:     3,     // smash points × this inside the hill
+  hillMinBuildings:   5,     // a new hill spot needs at least this many standing buildings
+
+  // Evacuation (beta): civilians leave buildings and walk to the exits
+  // (the middle of each map edge). Tanks win when enough get out.
+  evacGoal:           40,    // civilians that must escape for the tanks to win
+  civilianSpawnSeconds: 4,   // a new civilian every N seconds
+  civilianMaxAlive:   10,    // most civilians on the streets at once
+  civilianSpeed:      1.3,   // walking speed, tiles/sec
+  civilianPanicRange: 4,     // they re-route away from the kaiju inside this range
+  pointsCivilian:     15,    // kaiju walks into a civilian
+  civilianHeight:     0.3,   // how big a civilian is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
   //  MATCH
   // ───────────────────────────────────────────────────────────────
   matchSeconds:       300,   // round length (kaiju wins if still alive at 0)
-  countdownSeconds:   10,     // "3-2-1" before a round
+  countdownSeconds:   3,      // "3-2-1" before a round
   endScreenSeconds:   12,    // results screen, then the next round starts
   maxTanks:           6,     // tank seats per game
   afkSeconds:         60,    // lobby: no key press / stick move for this long = AFK.
@@ -123,17 +136,25 @@ export const TUNING = {
   cameraFollow:       8.0,   // how tightly the camera follows you (higher = snappier)
   gamepadSnap:        true,  // controller stick snaps to the 4 street directions
   gamepadDeadzone:    0.3,   // share of the controller stick that does nothing (0–1)
+  keyComboSnap:       true,  // two keys together follow the screen diagonal: S+A = S's street,
+                             // S+D = D's, W+A = A's, W+D = W's (false = old sum, cuts corners)
   controlScheme:      'street', // 'street': WASD follows the streets (W = up-right)
                                 // 'screen': W = straight up the screen
   occluderOpacity:    0.22,  // buildings in front of a unit fade to this (0 = invisible)
   shadows:            true,  // shadows on desktop
 
   // ───────────────────────────────────────────────────────────────
+  //  SOUND
+  // ───────────────────────────────────────────────────────────────
+  sfxVolume:          0.7,   // master volume 0–1 (M mutes / unmutes in game)
+  sfxHearing:         14,    // sounds fade out over this many tiles from you
+
+  // ───────────────────────────────────────────────────────────────
   //  ADVANCED  (rarely needs changing)
   // ───────────────────────────────────────────────────────────────
   kaijuRadius:        0.4,   // kaiju hitbox half-width (a street is 1 tile, so < 0.5)
   tankRadius:         0.25,  // tank hitbox half-width
-  soldierRadius:      0.12,  // soldier hitbox half-width
+  civilianRadius:     0.12,  // civilian hitbox half-width
   laneAssist:         6.0,   // how fast units slide to the middle of the street (corners)
   streetWiden:        0.1,   // extra road on each side of a street, in tiles
                              // (0.1 = streets 20% wider; above ~0.12 units clip building edges)
@@ -147,6 +168,15 @@ export const TUNING = {
 // Derived helpers (don't edit — change the values above instead)
 export function kaijuSpeedFor(tankCount) {
   return TUNING.kaijuSpeed * (1 + TUNING.kaijuSpeedPerTank * tankCount);
+}
+// Kaiju boost speed multiplier, t seconds into a boost: up to boostPeak over
+// boostRampSeconds, then easing back to × 1 at boostSeconds.
+export function boostMultiplierAt(t) {
+  const { boostSeconds: len, boostPeak: peak, boostRampSeconds: ramp } = TUNING;
+  if (t < 0 || t >= len) return 1;
+  if (t < ramp) return 1 + (peak - 1) * (t / ramp);
+  const f = (t - ramp) / Math.max(1e-6, len - ramp);   // 0 → 1
+  return 1 + (peak - 1) * (1 - f) * (1 - f * 0.5);      // eases out, faster at the start
 }
 export function kaijuMaxHpFor(tankCount) {
   return TUNING.kaijuHpPerTank * Math.max(1, tankCount);

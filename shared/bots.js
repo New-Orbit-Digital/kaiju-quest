@@ -4,16 +4,16 @@
 //  same game.input / game.action / game.block calls as real players,
 //  so they follow every rule in shared/game.js.
 //
-//  Bot tank:  drives into firing range of the kaiju, backs off when it
-//             gets close (boosting and dropping roadblocks as it flees).
+//  Bot tank:  drives to a spot in firing range with a clear line of sight
+//             to the kaiju, backs off when it gets close (dropping roadblocks).
 //             Repair happens on its own when it passes damaged buildings.
 //  Bot kaiju: walks to the nearest building and smashes it; chases any
-//             tank or soldier that comes close; smashes roadblocks in its way.
+//             tank that comes close; smashes roadblocks in its way.
+//             King of the Hill: prefers buildings inside the hill.
+//             Evacuation: hunts civilians it can reach quickly.
 // ─────────────────────────────────────────────────────────────
 import { TUNING as T } from './tuning.js';
-import { tileWalkable } from './sim.js';
-
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+import { bfs as pathBfs, steer, DIRS } from './path.js';
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
 export function createBots(game, state) {
@@ -21,44 +21,8 @@ export function createBots(game, state) {
   const brains = new Map(); // id → { path, goalKey, replanIn }
   let count = 0;
 
-  // Breadth-first search over walkable tiles from (sx,sz) until isGoal(tx,tz).
-  // passRoadblocks lets the kaiju plan through roadblocks (it smashes them).
-  function bfs(role, sx, sz, isGoal, maxNodes = 900, passRoadblocks = false) {
-    const key = (x, z) => z * city.width + x;
-    const prev = new Map([[key(sx, sz), -1]]);
-    const queue = [[sx, sz]];
-    for (let qi = 0; qi < queue.length && qi < maxNodes; qi++) {
-      const [x, z] = queue[qi];
-      if (isGoal(x, z)) {
-        const path = [];
-        let k = key(x, z);
-        while (k !== -1) { path.unshift({ x: k % city.width, z: Math.floor(k / city.width) }); k = prev.get(k); }
-        return path;
-      }
-      for (const [dx, dz] of DIRS) {
-        const nx = x + dx, nz = z + dz, nk = key(nx, nz);
-        if (prev.has(nk)) continue;
-        const ok = tileWalkable(city, role, nx, nz, game.destroyed, passRoadblocks ? null : game.blocked);
-        if (!ok) continue;
-        prev.set(nk, key(x, z));
-        queue.push([nx, nz]);
-      }
-    }
-    return null;
-  }
-
-  // Steer toward the next tile on the path (street-aligned, lane assist does the rest).
-  function steer(p, path) {
-    const here = { x: Math.round(p.x), z: Math.round(p.z) };
-    while (path.length > 1 && path[0].x === here.x && path[0].z === here.z) path.shift();
-    const next = path[0];
-    if (!next) return { x: 0, z: 0 };
-    const dx = next.x - p.x, dz = next.z - p.z;
-    if (Math.abs(dx) < 0.08 && Math.abs(dz) < 0.08) { path.shift(); return { x: 0, z: 0 }; }
-    // move along one axis at a time so corners are taken cleanly
-    if (Math.abs(dx) > Math.abs(dz)) return { x: Math.sign(dx), z: Math.abs(dz) > 0.25 ? Math.sign(dz) * 0.3 : 0 };
-    return { x: Math.abs(dx) > 0.25 ? Math.sign(dx) * 0.3 : 0, z: Math.sign(dz) };
-  }
+  const bfs = (role, sx, sz, isGoal, maxNodes = 900, passRoadblocks = false) =>
+    pathBfs(city, role, sx, sz, isGoal, { maxNodes, destroyed: game.destroyed, blocked: passRoadblocks ? null : game.blocked });
 
   function kaijuOf() { for (const p of state.players.values()) if (p.role === 'kaiju') return p; return null; }
 
@@ -67,7 +31,8 @@ export function createBots(game, state) {
     if (!p.alive || !k || state.phase !== 'playing') { game.input(id, { x: 0, z: 0 }); return; }
     const d = dist(p, k);
     const sx = Math.round(p.x), sz = Math.round(p.z);
-    let mode = d < 2.8 ? 'flee' : d > T.tankRange - 0.8 ? 'approach' : 'hold';
+    const sees = game.canSee(p, k);
+    let mode = d < 2.8 ? 'flee' : (d > T.tankRange - 0.8 || !sees) ? 'approach' : 'hold';
     if (mode === 'hold') { game.input(id, { x: 0, z: 0 }); b.path = null; return; }
 
     b.replanIn -= dt;
@@ -76,8 +41,8 @@ export function createBots(game, state) {
       if (mode === 'approach') {
         b.path = bfs('tank', sx, sz, (x, z) => {
           const dd = Math.hypot(x - k.x, z - k.z);
-          return dd >= 3.5 && dd <= T.tankRange - 1;
-        });
+          return dd >= 3.5 && dd <= T.tankRange - 1 && game.canSee({ x, z }, k);
+        }, 2000);
       } else {
         // flee: the reachable street tile within a few steps that is farthest from the kaiju
         let best = null, bestD = -1;
@@ -91,7 +56,6 @@ export function createBots(game, state) {
     }
     game.input(id, b.path ? steer(p, b.path) : { x: 0, z: 0 });
     if (mode === 'flee') {
-      if (p.boostIn <= 0) game.action(id);                  // boost away
       if (p.blockIn <= 0 && d < 2.5) game.block(id);        // roadblock behind
     }
   }
@@ -105,10 +69,14 @@ export function createBots(game, state) {
       if (t.role !== 'tank' || !t.alive) continue;
       const dd = dist(p, t);
       if (dd < preyD) { preyD = dd; prey = t; }
-      for (const s of t.soldiers) if (s.alive && dist(p, s) < preyD - 1) { preyD = dist(p, s) + 1; prey = s; }
+    }
+    if (state.mode === 'evac') {
+      let cd = 7;
+      state.civilians?.forEach(c => { const dd = dist(p, c); if (dd < cd && dd < preyD + 2) { cd = dd; prey = c; } });
     }
     b.replanIn -= dt;
     if (prey) {
+      if (p.boostIn <= 0 && dist(p, prey) > 1.5) game.boost(id);   // charge
       if (b.replanIn <= 0 || b.mode !== 'chase') {
         b.mode = 'chase'; b.replanIn = 0.3;
         const px = Math.round(prey.x), pz = Math.round(prey.z);
@@ -116,11 +84,15 @@ export function createBots(game, state) {
       }
     } else if (b.replanIn <= 0 || b.mode !== 'smash' || !b.path) {
       b.mode = 'smash'; b.replanIn = 1.0;
-      // nearest tile that has a standing building next to it
-      b.path = bfs('kaiju', sx, sz, (x, z) => DIRS.some(([dx, dz]) => {
+      // nearest tile that has a standing building next to it (inside the hill first, in KOTH)
+      const target = (inHill) => bfs('kaiju', sx, sz, (x, z) => DIRS.some(([dx, dz]) => {
         const id2 = city.owner[z + dz]?.[x + dx];
-        return id2 !== undefined && id2 >= 0 && city.buildings[id2].kind !== 'park' && state.buildingHp[id2] > 0;
-      }), 900, true);
+        if (id2 === undefined || id2 < 0) return false;
+        const bb = city.buildings[id2];
+        if (bb.kind === 'park' || state.buildingHp[id2] <= 0) return false;
+        return !inHill || Math.hypot(bb.cx - state.hillX, bb.cz - state.hillZ) <= T.hillRadius;
+      }), 2000, true);
+      b.path = (state.mode === 'koth' && target(true)) || target(false);
     }
     // roadblock in the way → face it and smash
     const next = b.path?.[1] || b.path?.[0];

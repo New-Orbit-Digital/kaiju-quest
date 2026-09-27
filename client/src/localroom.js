@@ -1,9 +1,9 @@
 // Offline stand-in for the Colyseus room: runs the same shared rules
 // (shared/game.js) in the browser. Used by the sandbox artifact. A kaiju and
 // three tanks join as bots; you drive one of them (Tab swaps) and the bots
-// play the rest.
+// play the rest. N cycles the game mode.
 import { TUNING } from '../../shared/tuning.js';
-import { createGame, plainMake } from '../../shared/game.js';
+import { createGame, plainMake, MODES } from '../../shared/game.js';
 import { createBots } from '../../shared/bots.js';
 
 export function createLocalRoom() {
@@ -23,6 +23,11 @@ export function createLocalRoom() {
       if (type === 'input') game.input(room.sessionId, msg);
       else if (type === 'action') game.action(room.sessionId);
       else if (type === 'block') game.block(room.sessionId);
+      else if (type === 'boost') game.boost(room.sessionId);
+      else if (type === 'mode') {   // N key / picker: switch mode now and restart the round
+        const m = msg?.next ? MODES[(MODES.indexOf(state.mode) + 1) % MODES.length] : msg?.mode;
+        game.setMode(null, m, true);
+      }
     },
     onMessage(type, cb) { handlers[type] = cb; },
     onLeave() {},

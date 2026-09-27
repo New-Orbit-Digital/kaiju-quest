@@ -57,6 +57,9 @@ export const SPAWNS = {
   tanks: [ { x: 0, z: 0 }, { x: 30, z: 30 }, { x: 30, z: 0 }, { x: 0, z: 30 }, { x: 15, z: 0 }, { x: 15, z: 30 } ],
 };
 
+// Evacuation exits: civilians walk to the nearest one (middle of each map edge).
+export const EXITS = [ { x: 15, z: 0 }, { x: 0, z: 15 }, { x: 30, z: 15 }, { x: 15, z: 30 } ];
+
 const KIND = { h: 'house', c: 'commercial', i: 'industrial', T: 'tower', g: 'park' };
 
 // Parse the ASCII into a grid + a building list.

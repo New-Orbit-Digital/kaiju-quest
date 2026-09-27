@@ -32,7 +32,7 @@ async function open(name, contextOpts, query) {
 }
 const me = (p) => p.evaluate(() => { const r = window.__kq.room, s = r.state, m = s.players.get(r.sessionId);
   return { role: m.role, mobile: m.mobile, x: m.x, z: m.z, alive: m.alive, phase: s.phase, hp: s.kaijuHp, max: s.kaijuMaxHp,
-           score: s.kaijuScore, n: s.players.size, soldiers: m.soldiers.length, isMobile: window.__kq.mobile }; });
+           score: s.kaijuScore, n: s.players.size, mode: s.mode, isMobile: window.__kq.mobile }; });
 const hold = async (p, key, ms) => { await p.keyboard.down(key); await sleep(ms); await p.keyboard.up(key); };
 async function until(cond, maxMs = 15000) { const t0 = Date.now(); while (!(await cond()) && Date.now() - t0 < maxMs) await sleep(40); }
 async function holdUntil(p, key, cond) { await p.keyboard.down(key); await until(cond); await p.keyboard.up(key); }
@@ -55,8 +55,8 @@ try {
   await sleep(1000);
   let k = await me(kaiju), t = await me(phone);
   check(k.role === 'kaiju' && t.role === 'tank' && t.mobile && t.isMobile, `roles: desktop=${k.role}, phone=${t.role} (mobile flag ${t.mobile})`);
-  check(t.soldiers === 4, `tank has a squad of ${t.soldiers}`);
-  check(await phone.locator('#kq-stick').isVisible() && await phone.locator('#kq-boost').isVisible(), 'phone shows joystick + boost button');
+  check(k.mode === 'ffa', `default mode is free for all (${k.mode})`);
+  check(await phone.locator('#kq-stick').isVisible() && await phone.locator('#kq-block').isVisible(), 'phone shows joystick + BLOCK button');
   check(!(await kaiju.locator('#kq-stick').count()), 'desktop has no touch controls');
 
   // ── Lobby ──
@@ -73,7 +73,16 @@ try {
   const names = await kaiju.evaluate(() => [...document.querySelectorAll('#kq-lobby .nm')].map(n => n.textContent));
   check(names.some(n => n.startsWith('Rex')) && names.some(n => n.startsWith('Pat')) && names.some(n => n.startsWith('Ghost')),
     `lobby lists every player by name: ${names.join(', ')}`);
-  await kaiju.screenshot({ path: 'docs/shots/p03-lobby.png' });
+  // mode picker: three modes, the new two flagged beta; picking one syncs to everyone
+  const modeBtns = await kaiju.evaluate(() => [...document.querySelectorAll('#kq-lobby [data-mode]')].map(b => b.innerText.replace(/\s+/g, ' ').trim()));
+  check(modeBtns.length === 3 && modeBtns.filter(t => /beta/i.test(t)).length === 2, `lobby mode picker: ${modeBtns.join(' | ')}`);
+  await kaiju.locator('#kq-lobby [data-mode=koth]').dispatchEvent('click');
+  await until(() => phone.evaluate(() => window.__kq.room.state.mode === 'koth'), 10000);
+  check((await me(phone)).mode === 'koth', 'picking King of the Hill reaches the other player');
+  await kaiju.screenshot({ path: 'docs/shots/p05-lobby-modes.png', timeout: 120000 });
+  await kaiju.locator('#kq-lobby [data-mode=ffa]').dispatchEvent('click');
+  await until(() => kaiju.evaluate(() => window.__kq.room.state.mode === 'ffa'), 10000);
+  await kaiju.screenshot({ path: 'docs/shots/p03-lobby.png', timeout: 120000 });
   // add a bot tank from the lobby, check it's listed, then remove it again
   await kaiju.locator('#kq-lobby [data-bot=tank]').dispatchEvent('click');
   await until(() => kaiju.evaluate(() => { let b = 0; window.__kq.room.state.players.forEach(p => { if (p.bot) b++; }); return b === 1; }), 15000);
@@ -125,29 +134,28 @@ try {
   const padHit = hp1.map((h, i) => h - hp2[i]).reduce((a, b) => a + b, 0);
   check(padHit === 10, `controller A button smashed: ${padHit} building HP (expected 10)`);
   await kaiju.evaluate(() => { navigator.getGamepads = () => []; });
-  await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-smash.png' });
+  await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-smash.png', timeout: 120000 });
 
   // Phone tank: joystick down-left on screen = south along the ring road → (0,3)
   await stick(phone, -45, 45, () => phone.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z >= 2.7; }));
   t = await me(phone);
   check(t.z > 2 && Math.abs(t.x) < 0.3, `joystick drove the tank down its street: (${t.x.toFixed(2)}, ${t.z.toFixed(2)})`);
-  // Boost from the phone button
-  await phone.locator('#kq-boost').dispatchEvent('pointerdown');
-  await until(() => phone.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; }), 5000);
-  const boosting = await phone.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; });
-  check(boosting, 'boost button triggers boost + cooldown');
+  check(!(await phone.locator('#kq-boost').count()), 'phone tank has no boost button (tanks have no boost)');
   await phone.locator('#kq-block').dispatchEvent('pointerdown');
   await until(() => kaiju.evaluate(() => window.__kq.room.state.roadblocks.size === 1), 8000);
   const rbCount = await kaiju.evaluate(() => window.__kq.room.state.roadblocks.size);
   check(rbCount === 1, `phone BLOCK button drops a roadblock (${rbCount})`);
 
   await sleep(800);
-  await phone.screenshot({ path: 'docs/shots/p02-phone-edge-arrow.png' });
+  await phone.screenshot({ path: 'docs/shots/p02-phone-edge-arrow.png', timeout: 120000 });
   check(await phone.evaluate(() => !document.getElementById('kq-edge').hidden), 'phone: edge arrow points to the off-screen kaiju');
 
-  // Kaiju: north up column 15 to row 3, then west toward the tank
+  // Kaiju: north up column 15 to row 3, then west toward the tank with a Shift boost
   await holdUntil(kaiju, 'KeyW', () => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z <= 3.05; }));
   await kaiju.keyboard.down('KeyA');
+  await kaiju.keyboard.press('ShiftLeft');
+  await until(() => kaiju.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; }), 8000);
+  check(await kaiju.evaluate(() => { const r = window.__kq.room; const m = r.state.players.get(r.sessionId); return m.boosting || m.boostIn > 0; }), 'kaiju SHIFT boost fires (and starts its cooldown)');
   let shotSeen = false, markerSeen = false, stomped = false;
   for (let i = 0; i < 60 && !stomped; i++) {
     await sleep(200);
@@ -156,13 +164,13 @@ try {
     stomped = fx.includes('tankDown');
     if (shotSeen && !markerSeen && (await phone.locator('.kq-marker:not([hidden])').count()) > 0) {
       markerSeen = true;
-      await phone.screenshot({ path: 'docs/shots/p02-phone-marker-firing.png' });
-      await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-under-fire.png' });
+      await phone.screenshot({ path: 'docs/shots/p02-phone-marker-firing.png', timeout: 120000 });
+      await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-under-fire.png', timeout: 120000 });
     }
   }
   await kaiju.keyboard.up('KeyA');
   k = await me(kaiju); t = await me(phone);
-  check(shotSeen && k.hp < k.max, `tank + squad auto-fired: kaiju HP ${k.hp.toFixed(2)}/${k.max}`);
+  check(shotSeen && k.hp < k.max, `tank auto-fired: kaiju HP ${k.hp.toFixed(2)}/${k.max}`);
   check(markerSeen, 'phone: marker shown over the kaiju');
   check(!(await kaiju.locator('.kq-marker:not([hidden])').count()) && !(await kaiju.locator('#kq-edge:not([hidden])').count()),
     'desktop kaiju: no markers and no arrows to tanks');
@@ -183,8 +191,18 @@ try {
   k = await me(kaiju);
   const endText = await kaiju.locator('#kq-end').innerText();
   check(/WINS/.test(endText), `end screen: "${endText.split('\n')[0]}"`);
-  await kaiju.screenshot({ path: 'docs/shots/p02-end-screen.png' });
-  await phone.screenshot({ path: 'docs/shots/p02-phone-end.png' });
+  await kaiju.screenshot({ path: 'docs/shots/p02-end-screen.png', timeout: 120000 });
+  await phone.screenshot({ path: 'docs/shots/p02-phone-end.png', timeout: 120000 });
+  // pick next round's mode from the end screen
+  await kaiju.locator('#kq-end [data-mode=evac]').dispatchEvent('click');
+  await until(() => kaiju.evaluate(() => window.__kq.room.state.mode === 'evac'), 10000);
+  check((await me(kaiju)).mode === 'evac', 'end screen mode picker sets the next round to Evacuation');
+  // sounds fired for the events this round had (recorded even if the headless audio device is silent)
+  const heard = await kaiju.evaluate(() => [...new Set(window.__kqSfx)]);
+  const heardPhone = await phone.evaluate(() => [...new Set(window.__kqSfx)]);
+  check(['monster-hit', 'building-destroyed', 'tank-shooting', 'tank-dead', 'monster-footsteps'].every(n => heard.includes(n)) || ['monster-hit', 'tank-shooting', 'tank-dead', 'monster-footsteps'].every(n => heard.includes(n)),
+    `kaiju heard: ${heard.join(', ')}`);
+  check(['tank-moving', 'roadblock-placed', 'tank-shooting'].every(n => heardPhone.includes(n)), `phone tank heard: ${heardPhone.join(', ')}`);
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
 } catch (e) {
   console.error(e); ok = false;

@@ -5,7 +5,10 @@ import { buildCity, fadeOccluders } from './city.js';
 import { loadUnitModels, createUnit, colourHex, TANK_COLOURS } from './units.js';
 import { moveVector, onInputChange, pollGamepad, usingGamepad, keyNames } from './input.js';
 import { createLocalRoom } from './localroom.js';
-import { initFx, createBuildingDamage, createRoadblocks } from './fx.js';
+import { initFx, createBuildingDamage, createRoadblocks, createHill, createExits } from './fx.js';
+import { initAudio, play as sfx, loop as sfxLoop, setListener, toggleMute, isMuted } from './audio.js';
+import { EXITS } from '../../shared/map.js';
+import { MODE_NAMES } from '../../shared/game.js';
 import { createHud } from './hud.js';
 import { createTouchControls } from './touch.js';
 
@@ -69,12 +72,16 @@ const statusEl = document.getElementById('status');
 const setStatus = (t) => { statusEl.textContent = t; statusEl.hidden = !t; };
 const hud = createHud({ mobile: MOBILE });
 const fx = initFx(scene);
-const touch = MOBILE ? createTouchControls({ onBoost: () => room?.send('action'), onBlock: () => room?.send('block') }) : null;
+const touch = MOBILE ? createTouchControls({ onBlock: () => room?.send('block') }) : null;
 const roadblocks = createRoadblocks(scene, (slot) => TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length]);
+const hill = createHill(scene, TUNING.hillRadius);
+let exits = null;
+initAudio();
+hud.onMute(() => toggleMute(), isMuted());
 
 // ── Boot ───────────────────────────────────────────────────
 const units = new Map();    // sessionId → { view, display: {x,z,rot}, alive }
-const squads = new Map();   // `${id}:${i}` → { view, display }
+const civilians = new Map(); // civilian id → { view, display }
 let room = null, city = null, wantedRole = null, roleNoticeDone = false;
 let buildingObjects = new Map(), damage = null;
 
@@ -83,6 +90,7 @@ async function boot() {
   city = built.city;
   buildingObjects = built.buildingObjects;
   damage = createBuildingDamage(scene, city, buildingObjects);
+  exits = createExits(scene, EXITS, city);
   camTarget.set((city.width - 1) / 2, 0, (city.depth - 1) / 2);
   if (OFFLINE) {
     room = createLocalRoom();
@@ -108,11 +116,13 @@ async function boot() {
       role: (r) => room.send('role', { role: r }),
       kick: (id) => room.send('kick', { id }),
       addBot: (role) => room.send('addBot', { role }),
+      mode: (m) => room.send('mode', { mode: m }),
     });
   }
   setStatus('');
   room.onMessage('fx', onFx);
-  window.__kq = { room, units, squads, camera, scene, renderer, mobile: MOBILE }; // debugging + screenshots
+  if (OFFLINE) hud.onLobby({ mode: (m) => room.send('mode', { mode: m }) });
+  window.__kq = { room, units, civilians, camera, scene, renderer, mobile: MOBILE }; // debugging + screenshots
 }
 
 // ── Effects from the server ────────────────────────────────
@@ -125,30 +135,44 @@ function onFx(e) {
   switch (e.type) {
     case 'shot': {
       if (!k) break;
-      const from = e.kind === 'tank' ? units.get(e.id) : squads.get(`${e.id}:${e.i}`);
+      const from = units.get(e.id);
       if (!from) break;
-      const y = e.kind === 'tank' ? 0.28 : 0.2;
       const jitter = () => (Math.random() - 0.5) * 0.5;
-      fx.tracer({ x: from.display.x, y, z: from.display.z },
-                { x: k.display.x + jitter(), y: 0.7 + Math.random() * 0.5, z: k.display.z + jitter() },
-                e.kind === 'tank' ? 0xffd66b : 0xfff1b0);
-      k.view.hit(e.kind === 'tank' ? 1 : 0.3);
+      if (e.blocked) {   // a building took the shell: tracer to its wall, a puff, no damage
+        fx.tracer({ x: from.display.x, y: 0.28, z: from.display.z }, { x: e.x, y: 0.3 + Math.random() * 0.2, z: e.z }, 0xffd66b);
+        fx.dust(e.x, e.z, 0.35, 0x8a8f98);
+      } else {
+        fx.tracer({ x: from.display.x, y: 0.28, z: from.display.z },
+                  { x: k.display.x + jitter(), y: 0.7 + Math.random() * 0.5, z: k.display.z + jitter() }, 0xffd66b);
+        k.view.hit(1);
+      }
+      sfx('tank-shooting', 0.8, from.display);
       break;
     }
     case 'strike':
       k?.view.attack();
       if (e.bid >= 0 && city) { const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 0.7 * b.size); }
+      if (e.bid >= 0 || e.roadblock) sfx('monster-hit', 1, { x: e.x, z: e.z });   // only hits that land
       break;
     case 'destroyed':
-      if (city) { const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 1.6 * b.size); fx.blast(b.cx, b.cz, 0.8 * b.size, 0x9a8f80); }
+      if (city) {
+        const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 1.6 * b.size); fx.blast(b.cx, b.cz, 0.8 * b.size, 0x9a8f80);
+        sfx('building-destroyed', 1, { x: b.cx, z: b.cz });
+        if (e.hill && room.state.players.get(room.sessionId)?.role === 'kaiju') hud.toast(`HILL BONUS ×${TUNING.hillMultiplier}  ★ ${e.points}`, 2);
+      }
       break;
-    case 'tankDown': fx.blast(e.x, e.z, 1.2); break;
+    case 'tankDown': fx.blast(e.x, e.z, 1.2); sfx('tank-dead', 1, { x: e.x, z: e.z }); break;
     case 'repair':
       if (city) { const b = city.buildings[e.bid]; fx.repair(b.cx, b.cz, b.size); }
       break;
-    case 'roadblock': fx.dust(e.x, e.z, 0.4); break;
+    case 'roadblock': fx.dust(e.x, e.z, 0.4); sfx('roadblock-placed', 1, { x: e.x, z: e.z }); break;
     case 'roadblockDown': fx.dust(e.x, e.z, 0.7); fx.blast(e.x, e.z, 0.4, 0xd9412b); break;
-    case 'soldierDown': fx.blast(e.x, e.z, 0.35, 0xc0392b); break;
+    case 'civilianDown': fx.blast(e.x, e.z, 0.35, 0xc0392b); break;
+    case 'escaped': fx.repair(e.x, e.z, 0.6); break;
+    case 'mode':
+      if (e.by && !OFFLINE) hud.toast(`${e.by} picked ${MODE_NAMES[e.mode]}${e.mode === 'ffa' ? '' : ' (beta)'}.`, 4);
+      if (OFFLINE) hud.toast(`Mode: ${MODE_NAMES[e.mode]}${e.mode === 'ffa' ? '' : ' (beta)'}`, 3);
+      break;
     case 'end': if (e.winner === 'tanks') k?.view.die(); break;
     case 'start': k?.view.revive(); break;
     case 'kaijuReplaced':
@@ -174,7 +198,7 @@ function follow(entry, p, dt) {
 
 function syncUnits(dt) {
   if (!room?.state?.players) return;
-  const seen = new Set(), seenSquad = new Set();
+  const seen = new Set();
   room.state.players.forEach((p, id) => {
     seen.add(id);
     let u = units.get(id);
@@ -186,29 +210,28 @@ function syncUnits(dt) {
       units.set(id, u);
     }
     u.alive = p.alive;
+    // the kaiju stands back up for every new round
+    if (p.role === 'kaiju' && u.view.dead && room.state.phase !== 'ended') u.view.revive();
     u.view.object.visible = p.role === 'kaiju' || p.alive;
     follow(u, p, dt);
     u.view.update(dt, p.moving);
-
-    (p.soldiers || []).forEach((s, i) => {
-      const key = `${id}:${i}`;
-      seenSquad.add(key);
-      let e = squads.get(key);
-      if (!e) {
-        const view = createUnit('soldier', p.slot, false);
-        scene.add(view.object);
-        e = { view, display: { x: s.x, z: s.z, rot: s.rot } };
-        squads.set(key, e);
-      }
-      e.view.object.visible = s.alive;
-      if (!s.alive) return;
-      const moving = Math.hypot(s.x - e.display.x, s.z - e.display.z) > 0.01;
-      follow(e, s, dt);
-      e.view.update(dt, moving, s.firing);
-    });
+  });
+  // Evacuation civilians
+  const seenCiv = new Set();
+  room.state.civilians?.forEach((c, id) => {
+    seenCiv.add(id);
+    let e = civilians.get(id);
+    if (!e) {
+      const view = createUnit('civilian', c.look, false);
+      scene.add(view.object);
+      e = { view, display: { x: c.x, z: c.z, rot: c.rot } };
+      civilians.set(id, e);
+    }
+    follow(e, c, dt);
+    e.view.update(dt, c.moving);
   });
   for (const [id, u] of units) if (!seen.has(id)) { scene.remove(u.view.object); units.delete(id); }
-  for (const [key, e] of squads) if (!seenSquad.has(key)) { scene.remove(e.view.object); squads.delete(key); }
+  for (const [key, e] of civilians) if (!seenCiv.has(key)) { scene.remove(e.view.object); civilians.delete(key); }
 }
 
 function updateSideHud(me) {
@@ -219,13 +242,15 @@ function updateSideHud(me) {
   room.state.players.forEach(p => { if (p.role === 'tank') tanks++; });
   const k = keyNames();
   const help = me.role === 'kaiju'
-    ? `${k.move} move · ${k.smash} smash the building beside you<br>Walk into tanks & soldiers to crush them`
-    : `${k.move} move · turret fires on its own<br>${k.boost} boost · ${k.block} drop roadblock<br>Drive near damaged buildings to repair them`;
+    ? `${k.move} move · ${k.smash} smash the building beside you · ${k.boost} boost<br>Walk into tanks${room.state.mode === 'evac' ? ' & civilians' : ''} to crush them`
+    : `${k.move} move · turret fires on its own (not through buildings)<br>${k.block} drop roadblock<br>Drive near damaged buildings to repair them`;
   hudBody.innerHTML =
     `You are ${swatch}<span class="role-${me.role}">${roleName}</span><br>` +
+    `Mode: ${MODE_NAMES[room.state.mode] || ''}${room.state.mode && room.state.mode !== 'ffa' ? ' (beta)' : ''}<br>` +
     `Tanks: ${tanks}/${TUNING.maxTanks} · Kaiju speed ${room.state.kaijuSpeed.toFixed(2)}<br>` +
     `<span class="dim">${help}` +
-    (room.offline ? (usingGamepad() ? `<br>Y swap unit` : `<br>Tab swap unit · C camera · V controls`) : '') + `</span>`;
+    (room.offline ? (usingGamepad() ? `<br>Y swap unit` : `<br>Tab swap unit · N mode · C camera · V controls`) : '') +
+    `<br>M sound ${isMuted() ? 'off' : 'on'}</span>`;
 }
 
 // ── Input → server ─────────────────────────────────────────
@@ -244,14 +269,14 @@ onInputChange(() => sendInput(performance.now())); // react on the key event, no
 function myRole() { return room?.state?.players?.get(room.sessionId)?.role; }
 
 // Controller buttons (standard layout). A / ✕ / Switch-B (0) = kaiju smash or
-// tank roadblock. Tank boost = right face button (1), RB/R1 (5) or RT/R2 (7).
+// tank roadblock. Kaiju boost = right face button (1), RB/R1 (5) or RT/R2 (7).
 function gamepadButtons() {
   const pressed = pollGamepad();
   if (!room || !pressed.length) return;
   const tank = myRole() === 'tank';
   for (const b of pressed) {
     if (b === 0) room.send(tank ? 'block' : 'action');
-    else if (tank && (b === 1 || b === 5 || b === 7)) room.send('action');
+    else if (!tank && (b === 1 || b === 5 || b === 7)) room.send('boost');
     else if (b === 9 && !room.offline && room.state.phase === 'lobby') { // Start / Menu / +: toggle ready
       room.send('ready', { ready: !room.state.players.get(room.sessionId)?.ready });
     }
@@ -261,21 +286,23 @@ function gamepadButtons() {
 
 function clearUnits() {
   for (const u of units.values()) scene.remove(u.view.object);
-  for (const e of squads.values()) scene.remove(e.view.object);
-  units.clear(); squads.clear();
+  for (const e of civilians.values()) scene.remove(e.view.object);
+  units.clear(); civilians.clear();
 }
 addEventListener('keydown', (e) => {
   if (!room) return;
-  // Kaiju: Space = smash. Tank: Shift = boost, Space = roadblock.
+  // Kaiju: Space = smash, Shift = boost. Tank: Space = roadblock.
   const isShift = e.code === 'ShiftLeft' || e.code === 'ShiftRight';
   if (e.code === 'Space') e.preventDefault();
   if (!e.repeat && (e.code === 'Space' || isShift)) {
     const tank = myRole() === 'tank';
     if (e.code === 'Space') room.send(tank ? 'block' : 'action');
-    else if (tank) room.send('action');
+    else if (!tank) room.send('boost');
   }
+  if (e.code === 'KeyM' && !e.repeat) { toggleMute(); hud.setMuted(isMuted()); }
   if (!room.offline) return;
-  // Sandbox-only keys: Tab swaps unit, C camera angle, V controls.
+  // Sandbox-only keys: Tab swaps unit, N game mode, C camera angle, V controls.
+  if (e.code === 'KeyN' && !e.repeat) room.send('mode', { next: true });
   if (e.code === 'Tab') {
     e.preventDefault();
     room.cycle(e.shiftKey ? -1 : 1);
@@ -289,6 +316,22 @@ addEventListener('keydown', (e) => {
   }
 });
 
+// ── Sound loops (single sources, volume follows the game each frame) ──
+function updateSound() {
+  const st = room?.state, me = st?.players?.get(room.sessionId);
+  setListener(camTarget.x, camTarget.z);
+  if (!st || !me) return;
+  const live = st.phase !== 'ended';
+  // kaiju footsteps: everyone hears them, fading with distance
+  let kp = null; st.players.forEach(p => { if (p.role === 'kaiju') kp = p; });
+  const ku = kaijuEntry();
+  sfxLoop('monster-footsteps', kp && kp.moving && live ? 1 : 0, ku?.display);
+  // your own tank's engine and repair hum (only you hear them, so they never stack)
+  const myTank = me.role === 'tank' && me.alive && live;
+  sfxLoop('tank-moving', myTank && me.moving ? 1 : 0);
+  sfxLoop('building-repair', myTank && me.repairing ? 1 : 0);
+}
+
 // ── Loop ───────────────────────────────────────────────────
 const timer = new THREE.Timer();
 function frame(ts) {
@@ -300,6 +343,9 @@ function frame(ts) {
   fx.update(dt);
   damage?.sync(room?.state?.buildingHp, dt);
   roadblocks.sync(room?.state?.roadblocks);
+  hill.sync(room?.state, dt);
+  exits?.sync(room?.state);
+  updateSound();
 
   const me = room?.state?.players?.get(room.sessionId);
   const mine = room && units.get(room.sessionId);

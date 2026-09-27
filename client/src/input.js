@@ -91,6 +91,13 @@ export function moveVector() {
   if (held('KeyS')) f -= 1;
   if (held('KeyD')) r += 1;
   if (held('KeyA')) r -= 1;
+  // Two keys held = the screen diagonal they point to, snapped onto the street
+  // that runs that way (streets run diagonally on screen): W+D = W's street,
+  // S+A = S's, W+A = A's, S+D = D's. Keeps you on a street instead of into a corner.
+  if (TUNING.controlScheme !== 'screen' && TUNING.keyComboSnap && f && r) {
+    if (f > 0 && r > 0) r = 0; else if (f < 0 && r < 0) r = 0;
+    else if (f > 0 && r < 0) f = 0; else f = 0;
+  }
   let x = fwd.x * f + right.x * r, z = fwd.z * f + right.z * r;
   const len = Math.hypot(x, z);
   if (len > 1) { x /= len; z /= len; }

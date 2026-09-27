@@ -170,7 +170,7 @@ export function createRoadblocks(scene, colourFor) {
         if (!v) {
           v = makeRoadblock(colourFor(rb.slot));
           v.position.set(rb.x, 0, rb.z);
-          v.rotation.y = ((rb.x * 7 + rb.z * 3) % 2) ? 0 : Math.PI / 2;
+          v.rotation.y = rb.rot || 0;   // server turns it across the road
           scene.add(v); views.set(key, v);
         }
         v.scale.y = rb.hits <= 1 ? 0.7 : 1;   // cracked after the first smash
@@ -178,4 +178,53 @@ export function createRoadblocks(scene, colourFor) {
       for (const [key, v] of views) if (!seen.has(key)) { scene.remove(v); views.delete(key); }
     },
   };
+}
+
+// ── King of the Hill: a glowing ring on the ground that slides to each new spot ──
+export function createHill(scene, radius) {
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, 48),
+    new THREE.MeshBasicMaterial({ color: 0xf5b82e, transparent: true, opacity: 0.22, depthWrite: false }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius - 0.2, radius, 64),
+    new THREE.MeshBasicMaterial({ color: 0xf5b82e, transparent: true, opacity: 0.85, depthWrite: false }));
+  for (const m of [disc, ring]) { m.rotation.x = -Math.PI / 2; m.renderOrder = 2; g.add(m); }
+  disc.position.y = 0.03; ring.position.y = 0.035;
+  g.visible = false; scene.add(g);
+  let t = 0;
+  return {
+    sync(state, dt) {
+      const on = state?.mode === 'koth' && state.phase === 'playing';
+      if (on && !g.visible) g.position.set(state.hillX, 0, state.hillZ);
+      g.visible = on;
+      if (!on) return;
+      const k = Math.min(1, dt * 4);
+      g.position.x += (state.hillX - g.position.x) * k;
+      g.position.z += (state.hillZ - g.position.z) * k;
+      t += dt;
+      // blink in the last 3 seconds before it moves
+      ring.material.opacity = state.hillIn < 3 ? 0.4 + 0.45 * Math.abs(Math.sin(t * 8)) : 0.85;
+    },
+    get position() { return g.position; },
+  };
+}
+
+// ── Evacuation exits: green pads with an arrow pointing off the map ──
+export function createExits(scene, exits, city) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0x7dff8a, transparent: true, opacity: 0.55, depthWrite: false });
+  for (const e of exits) {
+    const pad = new THREE.Group();
+    const sq = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9), mat);
+    sq.rotation.x = -Math.PI / 2; pad.add(sq);
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 3), new THREE.MeshBasicMaterial({ color: 0x1f6b3a }));
+    arrow.rotation.x = Math.PI / 2; arrow.position.y = 0.05; arrow.scale.y = 0.2;
+    pad.add(arrow);
+    // point outward, toward the nearest map edge
+    const out = e.z === 0 ? [0, -1] : e.z === city.depth - 1 ? [0, 1] : e.x === 0 ? [-1, 0] : [1, 0];
+    pad.rotation.y = Math.atan2(out[0], out[1]);
+    pad.position.set(e.x, 0.03, e.z);
+    g.add(pad);
+  }
+  g.visible = false; scene.add(g);
+  return { sync(state) { g.visible = state?.mode === 'evac' && (state.phase === 'playing' || state.phase === 'countdown'); } };
 }
