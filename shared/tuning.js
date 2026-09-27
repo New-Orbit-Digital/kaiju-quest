@@ -43,7 +43,7 @@ export const TUNING = {
   // ───────────────────────────────────────────────────────────────
   //  KAIJU
   // ───────────────────────────────────────────────────────────────
-  kaijuSpeed:         2.7,   // walking speed, tiles/sec (with no tanks in the game)
+  kaijuSpeed:         3,   // walking speed, tiles/sec (with no tanks in the game)
   kaijuSpeedPerTank:  0.05,  // +5% speed for each tank player (0.10 = +10%)
   kaijuHpPerTank:     100,   // kaiju health = this × number of tanks (no regen)
   viewTilesKaiju:     15,    // ZOOM: tiles visible top-to-bottom (bigger = zoomed out)
@@ -53,7 +53,7 @@ export const TUNING = {
   // ───────────────────────────────────────────────────────────────
   //  TANKS
   // ───────────────────────────────────────────────────────────────
-  tankSpeed:          3.5,   // driving speed, tiles/sec
+  tankSpeed:          2.8,   // driving speed, tiles/sec
   viewTilesTank:      11,    // ZOOM on desktop: tiles visible top-to-bottom
   viewTilesMobile:    12,    // ZOOM on phones (portrait uses this across the width)
 
