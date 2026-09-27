@@ -15,7 +15,8 @@ const POOLS = {
 
 export function modelForBuilding(b) {
   const pool = POOLS[b.kind];
-  return pool[(b.id * 7 + 3) % pool.length];
+  // 13 is coprime with every pool size, so each pool cycles through all its models
+  return pool[(b.id * 13 + 5) % pool.length];
 }
 export const ROAD_MODELS = ['roads/road-crossroad', 'roads/road-intersection', 'roads/road-straight', 'roads/road-bend', 'roads/road-end'];
 export const TREE_MODELS = ['suburbs/tree-large', 'suburbs/tree-small'];
