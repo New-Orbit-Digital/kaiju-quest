@@ -155,16 +155,19 @@ try {
 
   // Kaiju steps one tile north (towers either side), then smashes 3 times
   await holdUntil(kaiju, 'KeyW', () => kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z <= 11.05; }));
+  await kaiju.evaluate(() => window.__kq.room.send('debugHeal'));   // pristine city: no worn building dies mid-count
+  await sleep(300);
   const hp0 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
-  const hpSum = () => kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp).reduce((a, b) => a + b, 0));
-  const sum0 = hp0.reduce((a, b) => a + b, 0);
+  // damage = the sum of drops only (the tanks repair the worn Save the City! city meanwhile)
+  const dropped = (a, b) => a.map((h, i) => Math.max(0, h - b[i])).reduce((x, y) => x + y, 0);
+  const hpNow = () => kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
   for (let i = 0; i < 3; i++) {   // one press per smash, waiting for each to land (slow software rendering)
     await kaiju.keyboard.press('Space');
-    await until(async () => (await hpSum()) <= sum0 - 10 * (i + 1), 6000);
+    await until(async () => dropped(hp0, await hpNow()) >= 10 * (i + 1) - 0.01, 6000);
     await sleep(600);              // past the smash cooldown
   }
   const hp1 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
-  const hit = hp0.map((h, i) => h - hp1[i]).reduce((a, b) => a + b, 0);
+  const hit = Math.round(dropped(hp0, hp1));
   check(hit === 30, `3 strikes took ${hit} building HP (expected 30)`);
   // Controller: a fake standard-layout pad; A (button 0) = kaiju smash
   await kaiju.evaluate(() => {
@@ -175,11 +178,10 @@ try {
   });
   await sleep(700);
   await kaiju.evaluate(() => window.__padPress(true));
-  await until(() => kaiju.evaluate((h) => Array.from(window.__kq.room.state.buildingHp).reduce((a, b) => a + b, 0) < h,
-    hp1.reduce((a, b) => a + b, 0)), 20000);
+  // keep the biggest drop seen: a tank may repair the smashed building straight back up
+  let padHit = 0;
+  await until(async () => (padHit = Math.max(padHit, Math.round(dropped(hp1, await hpNow())))) >= 10, 20000);
   await kaiju.evaluate(() => window.__padPress(false));
-  const hp2 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
-  const padHit = hp1.map((h, i) => h - hp2[i]).reduce((a, b) => a + b, 0);
   check(padHit === 10, `controller A button smashed: ${padHit} building HP (expected 10)`);
   await kaiju.evaluate(() => { navigator.getGamepads = () => []; });
   await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-smash.png', timeout: 120000 });
@@ -188,6 +190,8 @@ try {
   await stick(phone, -45, 45, () => phone.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z >= 2.7; }));
   t = await me(phone);
   check(t.z > 2 && Math.abs(t.x) < 0.3, `joystick drove the tank down its street: (${t.x.toFixed(2)}, ${t.z.toFixed(2)})`);
+  // park it exactly at the row-3 corner (the slow renderer overshoots by a variable amount)
+  await phone.evaluate(() => window.__kq.room.send('debugTeleport', { x: 0, z: 2.8 }));
   check(!(await phone.locator('#kq-boost').count()), 'phone tank has no boost button (tanks have no boost)');
   await phone.locator('#kq-block').dispatchEvent('pointerdown');
   await until(() => kaiju.evaluate(() => window.__kq.room.state.roadblocks.size === 1), 8000);

@@ -43,6 +43,8 @@ export const MatchState = schema({
   kaijuSpeed: t.number(),
   players: t.map(Player),
   buildingHp: t.array('number'),
+  rebuildHp: t.array('number'),   // Save the City!: rubble rebuilding progress
+  cityHp: t.number(),   // Save the City!: city health 0…1
   roadblocks: t.map(Roadblock),
   code: t.string(),     // room code for share links (every room has one)
   private: t.boolean(), // private rooms never get random players

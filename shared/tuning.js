@@ -64,11 +64,11 @@ export const TUNING = {
   repairRange:        1.5,   // tiles from the tank to the building
   repairPerSecond:    4,     // building HP restored per second, per tank (× SCALING repairRate)
 
-  // Roadblocks (SPACE / controller A / phone BLOCK button) — dropped behind the tank.
+  // Roadblocks (SPACE / controller A / phone BLOCK button) — dropped in front of the tank.
+  // Strength: see SCALING roadblockHits (fewer tanks = sturdier roadblocks).
   // They only block the kaiju; tanks and civilians go through.
   roadblockCooldown:  10,    // seconds between drops
-  roadblockHits:      2,     // kaiju smashes needed to break one
-  roadblockMaxPerTank: 3,    // dropping another removes that tank's oldest
+  roadblockMaxPerTank: 3,    // dropping another removes that tank's oldest (every mode)
 
   // Getting crushed (respawn time: see SCALING)
   respawnMinDistance: 12,    // respawn at least this many tiles from the kaiju
@@ -82,7 +82,14 @@ export const TUNING = {
   // ───────────────────────────────────────────────────────────────
   buildingHp:     { house: 20, commercial: 40, industrial: 40, tower: 80 },
   buildingPoints: { house: 10, commercial: 25, industrial: 25, tower: 60 },  // kaiju, per building destroyed
-  repairPoints:       1,     // tanks: points per building HP repaired
+  repairPoints:       1,     // tanks: points per building HP repaired (or rebuilt from rubble)
+  // Tanks also rebuild rubble (rate in SCALING rebuildRate). The rebuilt building
+  // stands back up once it's back to full health and nobody is on the lot.
+
+  // The round lasts secondsPerPlayer × players (see MATCH). At the buzzer the
+  // kaiju wins if the city's total health is at or below this share; else the tanks win.
+  cityLoseAt:         0.5,
+  // (the city starts a bit damaged with more tanks: SCALING cityStart)
   // (points for crushing a tank / killing the kaiju: see SCALING)
 
   // When the kaiju goes down
@@ -108,10 +115,13 @@ export const TUNING = {
     kaijuSpeed:         [ 1.00, 1.05, 1.10, 1.15, 1.20, 1.25 ], // × kaijuSpeed
     kaijuRespawn:       [   10,   10,   10,   10,   10,   10 ], // seconds out after being killed
     kaijuKillPoints:    [  120,  120,  120,  120,  120,  120 ], // tanks score this for a kill
-    repairRate:         [  1.5,  1.2,  1.0, 0.85,  0.7,  0.6 ], // × repairPerSecond, each tank
+    repairRate:         [  0.8,  0.6, 0.45, 0.35, 0.28, 0.23 ], // × repairPerSecond, each tank
     tankRespawn:        [    3,  3.5,    4,  4.5,    5,    6 ], // seconds out after being crushed
     tankCrushPoints:    [  100,   60,   45,   35,   30,   25 ], // kaiju scores this per tank crushed
     crateDrift:         [    0,  0.2,  0.4,  0.6,  0.8,  1.0 ], // crate drifts to the kaiju, tiles/sec
+    rebuildRate:        [  0.6, 0.45, 0.35, 0.28, 0.22, 0.18 ], // rubble rebuilding, × repairPerSecond, each tank
+    cityStart:          [ 0.52, 0.51, 0.50, 0.49, 0.48, 0.47 ], // Save the City!: city health at the start
+    roadblockHits:      [   10,    8,    7,    6,    5,    4 ], // kaiju smashes to break a roadblock
   },
 
   // ───────────────────────────────────────────────────────────────
@@ -131,7 +141,7 @@ export const TUNING = {
   kothHitRange:       1.6,   // how close another kaiju must be to smash it, tiles
   kothKillPoints:     50,    // points for knocking out another kaiju
   kothRespawn:        5,     // seconds out after being knocked out
-  kothSecondsPerPlayer: 30,  // round length = this × number of kaiju (2 players = 1:00)
+  // (round length: secondsPerPlayer under MATCH)
   kothPointsPerPlayer: 250,  // first to this × number of kaiju wins outright
 
   // Evacuation: a fixed crowd of civilians walks to the exits (the middle
@@ -140,15 +150,16 @@ export const TUNING = {
   civilianSpawnSeconds: 3,   // a new civilian every N seconds (until the crowd runs out)
   civilianMaxAlive:   10,    // most civilians on the streets at once
   civilianSpeed:      1.3,   // walking speed, tiles/sec
-  civilianPanicRange: 4,     // they re-route away from the kaiju inside this range
-  evacRoadblockHits:  10,    // roadblocks are sturdier here (5× normal) …
-  evacRoadblockCap:   0,     // … and unlimited (0 = no cap per tank)
+  civilianPanicRange: 10,    // they steer around the kaiju only when it's this close
+  civilianRoadblockCost: 0.3, // path cost of a roadblock tile (1 = normal street): < 1 makes
+                             // civilians prefer routes the tanks have walled off
   civilianHeight:     0.5,   // how big a civilian is drawn (visual only)
 
   // ───────────────────────────────────────────────────────────────
   //  MATCH
   // ───────────────────────────────────────────────────────────────
-  matchSeconds:       300,   // round length
+  secondsPerPlayer:   30,    // Save the City! and King of the Hill: round = this × players
+  matchSeconds:       300,   // Evacuation round length
   countdownSeconds:   3,      // "3-2-1" before a round
   endScreenSeconds:   12,    // results screen, then the next round starts
   maxTanks:           6,     // tank seats per game

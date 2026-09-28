@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createGame, plainMake, inKaijuView, MODES } from '../../shared/game.js';
 import { TUNING as T, kaijuMaxHpFor, kaijuSpeedFor, boostMultiplierAt, scaled } from '../../shared/tuning.js';
 import { tileWalkable } from '../../shared/sim.js';
+import { cheapest } from '../../shared/path.js';
 import { createBots } from '../../shared/bots.js';
 import { SPAWNS, EXITS } from '../../shared/map.js';
 
@@ -19,6 +20,8 @@ function setup(nTanks = 1, opts = {}) {
   for (let i = 0; i < nTanks; i++) g.join(`T${i}`, { role: 'tank', mobile: opts.mobile });
   const run = (sec) => { for (let t = 0; t < sec - 1e-9; t += 0.05) g.tick(0.05); };
   if (!opts.noStart) { for (const id of state.players.keys()) g.setReady(id, true); run(T.countdownSeconds + 0.1); }
+  // Save the City! starts the city worn down; most tests want it pristine
+  if (!opts.worn) for (const b of g.city.buildings) state.buildingHp[b.id] = g.maxHpOf(b);
   const place = (p, x, z) => { p.x = x; p.z = z; };
   return { g, state, events, run, place, K: state.players.get('K'), T0: state.players.get('T0') };
 }
@@ -211,20 +214,37 @@ test('line of sight: a building between tank and kaiju takes the shell, no damag
   assert.equal(g.canSee(T0, K), true, 'rubble does not block');
 });
 
-test('repair: restores damaged buildings at the scaled rate and scores tank points; rubble stays', () => {
+test('repair: patches damaged buildings and rebuilds rubble at the scaled rates, scoring tank points', () => {
   const { g, state, run, K, T0, place } = setup(1);
   place(K, 30, 30);
   const house = g.city.owner[4][1], house2 = g.city.owner[4][2];
   state.buildingHp[house] = 5; state.buildingHp[house2] = 0;
-  place(T0, 1, 3);
+  place(T0, 1, 3);                       // street beside both houses
   run(1);
-  const rate = T.repairPerSecond * scaled('repairRate', 1);
+  const rate = T.repairPerSecond * scaled('repairRate', 1), rebuild = T.repairPerSecond * scaled('rebuildRate', 1);
   assert.ok(Math.abs(state.buildingHp[house] - (5 + rate)) < 0.4, `repaired to ${state.buildingHp[house]}`);
-  assert.ok(Math.abs(state.tankScore - rate * T.repairPoints) < 0.4, `tank points ${state.tankScore}`);
+  assert.ok(Math.abs(state.rebuildHp[house2] - rebuild) < 0.4, `rebuilding ${state.rebuildHp[house2]}`);
+  assert.equal(state.buildingHp[house2], 0, 'still rubble while rebuilding');
+  assert.ok(Math.abs(state.tankScore - (rate + rebuild) * T.repairPoints) < 0.6, `tank points ${state.tankScore}`);
   run(20);
   assert.equal(state.buildingHp[house], T.buildingHp.house, 'capped at full HP');
-  assert.ok(Math.abs(state.tankScore - (T.buildingHp.house - 5) * T.repairPoints) < 1e-6, 'points only for HP actually repaired');
-  assert.equal(state.buildingHp[house2], 0, 'destroyed buildings are not repaired');
+  assert.equal(state.buildingHp[house2], T.buildingHp.house, 'rubble rebuilt into a standing building');
+  assert.equal(state.rebuildHp[house2], 0);
+  assert.equal(tileWalkable(g.city, 'kaiju', 2, 4, g.destroyed), false, 'blocks again once rebuilt');
+});
+
+test('rebuild: a finished building waits until nobody is standing on its lot', () => {
+  const { g, state, run, K, T0, place } = setup(1);
+  const house2 = g.city.owner[4][2];
+  state.buildingHp[house2] = 0;
+  place(K, 2, 4);                        // kaiju standing in the rubble
+  place(T0, 1, 3);
+  K.hp = 1e9;                            // keep it alive under fire for this test
+  run(20);
+  assert.equal(state.buildingHp[house2], 0, 'not rebuilt on top of the kaiju');
+  assert.equal(state.rebuildHp[house2], T.buildingHp.house, 'ready and waiting');
+  place(K, 30, 30); run(0.2);
+  assert.equal(state.buildingHp[house2], T.buildingHp.house);
 });
 
 test('repairing flag is set only while a tank is fixing a building', () => {
@@ -239,7 +259,7 @@ test('repairing flag is set only while a tank is fixing a building', () => {
   assert.equal(T0.repairing, false);
 });
 
-test('roadblocks: drop in front of the tank across the road, block only the kaiju, 2 smashes, cooldown', () => {
+test('roadblocks: drop in front of the tank across the road, block only the kaiju, scaled strength, cooldown', () => {
   const { g, state, run, K, T0, place } = setup(1);
   place(K, 24, 12); place(T0, 6, 3);
   g.input('T0', { x: 1, z: 0 }); g.tick(0.05); g.input('T0', { x: 0, z: 0 });   // face east
@@ -259,9 +279,10 @@ test('roadblocks: drop in front of the tank across the road, block only the kaij
   assert.ok(T0.x < tx, 'tank passed through its own roadblock');
   place(T0, 24, 24); place(K, kx, 3);
   T.strikeRange = 1.5;
-  for (let i = 0; i < T.roadblockHits; i++) { run(T.strikeCooldown + 0.05); K.rot = Math.PI / 2; g.action('K'); g.tick(0.05); }
+  assert.equal(state.roadblocks.get(`${tx},3`).hits, scaled('roadblockHits', 1), 'strength from SCALING');
+  for (let i = 0; i < scaled('roadblockHits', 1); i++) { run(T.strikeCooldown + 0.05); K.rot = Math.PI / 2; g.action('K'); g.tick(0.05); }
   T.strikeRange = 1;
-  assert.equal(state.roadblocks.size, 0, 'broken after 2 smashes');
+  assert.equal(state.roadblocks.size, 0, 'broken after roadblockHits smashes');
 });
 
 test('roadblocks: a tank keeps at most roadblockMaxPerTank; round reset clears them', () => {
@@ -314,19 +335,20 @@ test('points race: killing the kaiju scores for the tanks, doubles repair for a 
   assert.ok(events.some(e => e.type === 'kaijuDown') && events.some(e => e.type === 'kaijuUp'));
 });
 
-test('points race: the higher score wins at the buzzer; equal scores tie', () => {
-  const a = setup(1);
-  a.place(a.T0, 24, 24); a.place(a.K, 12, 12);
-  a.state.kaijuScore = 50; a.state.tankScore = 40; a.state.clock = 0.1; a.run(0.2);
-  assert.equal(a.state.phase, 'ended'); assert.equal(a.state.winner, 'kaiju');
+test('save the city: round = secondsPerPlayer × players; city starts worn by tank count; kaiju wins at ≤ cityLoseAt', () => {
+  const a = setup(2, { worn: true });
+  assert.ok(Math.abs(a.state.clock - (T.secondsPerPlayer * 3 - 0.1)) < 0.2, `clock ${a.state.clock}`);
+  assert.ok(Math.abs(a.state.cityHp - scaled('cityStart', 2)) < 0.01, `city starts at ${a.state.cityHp}`);
+  assert.ok(a.g.city.buildings.every(b => b.kind === 'park' || a.state.buildingHp[b.id] > 0), 'wear never destroys a building');
+  a.place(a.K, 30, 30); a.state.players.forEach(p => { if (p.role === 'tank') a.place(p, 0, 0); });
+  a.state.clock = 0.1; a.run(0.2);
+  assert.equal(a.state.winner, 'tanks', 'city above half → tanks');
   const b = setup(1);
-  b.place(b.T0, 24, 24); b.place(b.K, 12, 12);
-  b.state.kaijuScore = 10; b.state.tankScore = 90; b.state.clock = 0.1; b.run(0.2);
-  assert.equal(b.state.winner, 'tanks');
-  const c = setup(1);
-  c.place(c.T0, 24, 24); c.place(c.K, 12, 12);
-  c.state.clock = 0.1; c.run(0.2);
-  assert.equal(c.state.winner, 'tie');
+  b.place(b.K, 30, 30); b.place(b.T0, 0, 0);
+  for (const bd of b.g.city.buildings) if (bd.kind !== 'park' && bd.id % 3) b.state.buildingHp[bd.id] = 0;   // wreck ~2/3
+  b.state.clock = 0.1; b.run(0.2);
+  assert.ok(b.state.cityHp <= T.cityLoseAt);
+  assert.equal(b.state.winner, 'kaiju');
 });
 
 test('bonus crate: appears fair to both sides, drifts toward the kaiju faster with more tanks, and tilts scoring', () => {
@@ -378,8 +400,8 @@ test('next round resets buildings, scores and positions', () => {
   assert.equal(state.phase, 'ended');
   run(T.endScreenSeconds + T.countdownSeconds + 0.2);
   assert.equal(state.phase, 'playing');
-  assert.equal(state.buildingHp[bid], T.buildingHp.house);
-  assert.equal(state.kaijuScore, 0); assert.equal(state.tankScore, 0);
+  assert.ok(state.buildingHp[bid] > 0, 'rubble is back up (the new round starts worn, not wrecked)');
+  assert.equal(state.kaijuScore, 0); assert.ok(state.tankScore < 5, 'scores reset (a tank may already be repairing)');
   assert.equal(K.x, SPAWNS.kaiju.x); assert.equal(K.z, SPAWNS.kaiju.z);
 });
 
@@ -476,12 +498,11 @@ test('evacuation: a fixed crowd walks to the exits; first side past half wins', 
   state.evacuated = Math.floor(T.evacPool / 2);
   let id, c; for (const [i, cv] of state.civilians) { id = i; c = cv; break; }
   if (!c) { run(T.civilianSpawnSeconds + 0.1); [[id, c]] = [...state.civilians]; }
-  const e = EXITS[0]; c.x = e.x; c.z = e.z;
-  g.tick(0.05);
+  for (const e of EXITS) { if (state.phase !== 'playing') break; c.x = e.x; c.z = e.z; g.tick(0.05); }   // only its own exit counts
   assert.equal(state.phase, 'ended'); assert.equal(state.winner, 'tanks');
 });
 
-test('evacuation: stomps count for the kaiju; roadblocks are sturdier and unlimited', () => {
+test('evacuation: stomps count for the kaiju; roadblocks capped at 3 with scaled strength', () => {
   const { g, state, run, K, T0, place } = setup(1, { mode: 'evac' });
   place(T0, 0, 30);
   g.tick(0.05);
@@ -494,8 +515,8 @@ test('evacuation: stomps count for the kaiju; roadblocks are sturdier and unlimi
     place(T0, 3 + i * 3, 3); T0.rot = Math.PI / 2; T0.blockIn = 0;
     g.block('T0'); g.tick(0.05);
   }
-  assert.equal(state.roadblocks.size, T.roadblockMaxPerTank + 2, 'no cap');
-  assert.ok([...state.roadblocks.values()].every(rb => rb.hits === T.evacRoadblockHits));
+  assert.equal(state.roadblocks.size, T.roadblockMaxPerTank, 'capped');
+  assert.ok([...state.roadblocks.values()].every(rb => rb.hits === scaled('roadblockHits', 1)));
 });
 
 test('evacuation: the round never ends early from the crowd before half has gone one way', () => {
@@ -553,8 +574,9 @@ test('bots: a bot kaiju walks up to a roadblock in its way and smashes through i
   const K = state.players.get(kid), Tk = state.players.get(tid);
   // the kaiju chases a tank along row 3; a roadblock sits between them
   K.x = 2; K.z = 3; Tk.x = 5.6; Tk.z = 3;
-  state.roadblocks.set('4,3', { x: 4, z: 3, hits: T.roadblockHits, slot: 0, rot: Math.PI / 2 });
-  for (let t = 0; t < 6 && state.roadblocks.size; t += 0.05) { bots.tick(0.05, tid); g.tick(0.05); }
+  state.roadblocks.set('4,3', { x: 4, z: 3, hits: scaled('roadblockHits', 1), slot: 0, rot: Math.PI / 2 });
+  K.hp = 1e9;   // survive the tank's fire for the test
+  for (let t = 0; t < 20 && state.roadblocks.size; t += 0.05) { bots.tick(0.05, tid); g.tick(0.05); }
   assert.equal(state.roadblocks.size, 0, 'bot kaiju smashed the roadblock');
 });
 
@@ -583,7 +605,7 @@ test('king of the hill: round time and winning score scale with the number of pl
   const { g, state, run, K, place } = setup(2, { mode: 'koth' });
   const players = state.players.size;
   assert.equal(players, 3);
-  assert.ok(Math.abs(state.clock - (T.kothSecondsPerPlayer * players - 0.1)) < 0.2, `clock ${state.clock}`);
+  assert.ok(Math.abs(state.clock - (T.secondsPerPlayer * players - 0.1)) < 0.2, `clock ${state.clock}`);
   assert.equal(state.target, T.kothPointsPerPlayer * players);
   // reaching the target ends the round at once
   K.score = state.target - T.buildingPoints.house;
@@ -609,4 +631,33 @@ test('king of the hill: the zone respawns next to whoever is furthest behind', (
   K.score = 0;                           // now K is behind
   state.hillIn = 0.01; run(0.05);
   assert.ok(Math.hypot(state.hillX - K.x, state.hillZ - K.z) < Math.hypot(state.hillX - R.x, state.hillZ - R.z));
+});
+
+test('roadblocks: placing a 4th removes the oldest and tells the tank', () => {
+  const { g, state, events, K, T0, place } = setup(1);
+  place(K, 30, 30);
+  for (let i = 0; i < 4; i++) { place(T0, 3 + i * 3, 3); T0.rot = Math.PI / 2; T0.blockIn = 0; g.block('T0'); g.tick(0.05); }
+  assert.equal(state.roadblocks.size, 3);
+  assert.equal(state.roadblocks.has('4,3'), false, 'the first one went');
+  const note = events.filter(e => e.type === 'roadblockRecycled');
+  assert.equal(note.length, 1); assert.equal(note[0].id, 'T0');
+});
+
+test('evacuation: civilians head for the exit farthest from their spawn and favour roadblocked streets', () => {
+  const { g, state, run, K, T0, place } = setup(1, { mode: 'evac' });
+  place(K, 30, 30); place(T0, 0, 0);
+  run(0.1);
+  const [, c] = [...state.civilians][0];
+  const far = EXITS.reduce((a, e) => Math.hypot(e.x - c.x, e.z - c.z) > Math.hypot(a.x - c.x, a.z - c.z) ? e : a, EXITS[0]);
+  const d0 = Math.hypot(far.x - c.x, far.z - c.z);
+  run(4);
+  const c2 = [...state.civilians.values()].find(v => v === c);
+  if (c2) assert.ok(Math.hypot(far.x - c2.x, far.z - c2.z) < d0 - 2, 'heading for the farthest exit');
+  // pathing: between two equal routes, the roadblocked one wins
+  // (5,3) → (10,6): east-then-south and south-then-east are the same length
+  const route = (costs) => cheapest(g.city, 'tank', 5, 3, 10, 6, { cost: costs });
+  const viaCol10 = route((x, z) => (x === 10 && z > 3 && z < 6 ? T.civilianRoadblockCost : 1));
+  assert.ok(viaCol10.some(t => t.x === 10 && t.z === 4), 'takes the roadblocked column 10');
+  const viaRow6 = route((x, z) => (z === 6 && x > 5 && x < 10 ? T.civilianRoadblockCost : 1));
+  assert.ok(viaRow6.some(t => t.z === 6 && t.x === 7), 'takes the roadblocked row 6');
 });

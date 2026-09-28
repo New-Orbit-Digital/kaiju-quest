@@ -191,6 +191,12 @@ function onFx(e) {
       if (city) { const b = city.buildings[e.bid]; fx.repair(b.cx, b.cz, b.size); }
       break;
     case 'roadblock': fx.dust(e.x, e.z, 0.4); sfx('roadblock-placed', 1, { x: e.x, z: e.z }); break;
+    case 'roadblockRecycled':   // only the tank that dropped it sees the note
+      if (e.id === room.sessionId) { const u = units.get(e.id); if (u) hud.floatText(camera, u.display.x, 0.9, u.display.z, 'oldest roadblock removed'); }
+      break;
+    case 'rebuilt':
+      if (city) { const b = city.buildings[e.bid]; fx.dust(b.cx, b.cz, 1.2 * b.size, 0xd8d2c4); fx.repair(b.cx, b.cz, b.size); }
+      break;
     case 'roadblockDown': fx.dust(e.x, e.z, 0.7); fx.blast(e.x, e.z, 0.4, 0xd9412b); break;
     case 'civilianDown': fx.blast(e.x, e.z, 0.35, 0xc0392b); break;
     case 'escaped': fx.repair(e.x, e.z, 0.6); break;

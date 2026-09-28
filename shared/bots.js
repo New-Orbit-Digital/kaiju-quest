@@ -56,7 +56,7 @@ export function createBots(game, state, rand = Math.random) {
     let mode;
     if (k.alive && d < 2.8) mode = 'flee';
     else if (c && dist(p, c) < 8 && (!k.alive || dist(p, c) < dist(k, c))) mode = 'crate';   // grab it first
-    else if (!k.alive) mode = 'repair';                                                         // kaiju down: fix things
+    else if (!k.alive || (state.mode === 'race' && d > 9 && p.slot % 2 === 1)) mode = 'repair';   // kaiju down, or (half the tanks) far: fix the city
     else mode = (d > T.tankRange - 0.8 || !game.canSee(p, k)) ? 'approach' : 'hold';
     b.replanIn -= dt;
     // sitting right on top of another tank? move somewhere else
@@ -80,7 +80,9 @@ export function createBots(game, state, rand = Math.random) {
           const bid = city.owner[z + dz]?.[x + dx];
           if (bid === undefined || bid < 0) return false;
           const bb = city.buildings[bid], hp = state.buildingHp[bid];
-          return bb.kind !== 'park' && hp > 0 && hp < game.maxHpOf(bb);
+          if (bb.kind === 'park') return false;
+          if (hp <= 0) return state.mode === 'race';        // rubble can be rebuilt in Save the City!
+          return hp < game.maxHpOf(bb);
         });
         b.path = bfs('tank', sx, sz, (x, z) => damaged(x, z) && !busy(x, z), 2000) || bfs('tank', sx, sz, damaged, 2000);
       } else {
@@ -107,7 +109,7 @@ export function createBots(game, state, rand = Math.random) {
     b.lastHp ??= p.hp;
     if (p.hp < b.lastHp) b.angry = 4;
     b.lastHp = p.hp; b.angry = Math.max(0, (b.angry || 0) - dt);
-    let prey = null, preyD = b.angry > 0 ? 8 : 4, hit = false;
+    let prey = null, preyD = b.angry > 0 ? 8 : state.mode === 'race' ? 2.5 : 4, hit = false;   // Save the City!: mostly smash
     for (const t of state.players.values()) {
       if (t === p || !t.alive) continue;
       if (t.role === 'tank' && dist(p, t) < preyD) { preyD = dist(p, t); prey = t; }

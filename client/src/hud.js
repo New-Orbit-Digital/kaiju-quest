@@ -10,7 +10,7 @@ const CSS = `
 [hidden] { display: none !important; }
 /* big screens: panels, text and buttons scale with the window (--kq-ui) */
 #kq-top, #kq-banner, #kq-end .card, #kq-lobby, #kq-pick .card, #kq-toast, #kq-split, #kq-mute, #hud, #status,
-.kq-tag, #kq-edge, #kq-hillarrow, #kq-cratearrow, .kq-marker { zoom: var(--kq-ui, 1); }
+.kq-tag, .kq-float, #kq-edge, #kq-hillarrow, #kq-cratearrow, .kq-marker { zoom: var(--kq-ui, 1); }
 #kq-top { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
   display: flex; gap: 14px; align-items: center; padding: 8px 14px; border-radius: 8px;
   background: rgba(12,16,24,.78); color: #eef2f6; font: 600 14px/1.2 system-ui, sans-serif; pointer-events: none; z-index: 5; }
@@ -40,7 +40,14 @@ const CSS = `
   width: min(420px, calc(100% - 32px)); height: 10px; border-radius: 5px; background: #3a4558; overflow: hidden; z-index: 5; pointer-events: none; }
 #kq-split i { position: absolute; top: 0; bottom: 0; transition: width .3s; }
 #kq-split .k { left: 0; background: #7dff8a; } #kq-split .t { right: 0; background: #8fb0ff; }
-#kq-split::after { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px; background: #fff; }
+#kq-split::after { content: ''; position: absolute; right: var(--line, 50%); top: -2px; bottom: -2px; width: 2px; background: #fff; }
+#kq-split b { display: none; }
+#kq-split.city { height: 16px; border-radius: 8px; }
+#kq-split.city .t { left: 0; right: auto; background: linear-gradient(90deg, #e5484d, #f5b82e 45%, #7dff8a); }
+#kq-split.city b { display: block; position: absolute; inset: 0; text-align: center; font: 800 11px/16px system-ui, sans-serif; color: #fff; text-shadow: 0 1px 2px #000; }
+.kq-float { position: fixed; transform: translate(-50%, -100%); pointer-events: none; z-index: 6; white-space: nowrap;
+  font: 700 12px/1 system-ui, sans-serif; color: #ffd9a8; text-shadow: 0 1px 3px #000; animation: kq-float 2s ease-out forwards; }
+@keyframes kq-float { 0% { opacity: 0; margin-top: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; margin-top: -48px; } }
 #kq-cratearrow { position: fixed; width: 0; height: 0; z-index: 5; pointer-events: none; }
 #kq-cratearrow::before { content: ''; position: absolute; left: -16px; top: -14px; border-left: 28px solid #f5b82e;
   border-top: 14px solid transparent; border-bottom: 14px solid transparent; filter: drop-shadow(0 0 4px rgba(0,0,0,.8)); }
@@ -166,7 +173,7 @@ export function createHud({ mobile }) {
   const top = el(`<div id="kq-top" hidden><div class="hp"><i></i><b></b></div><div class="clock"></div><div class="score"></div><div class="extra"></div></div>`);
   const hillArrow = el(`<div id="kq-hillarrow" hidden><span>ZONE</span></div>`);
   const crateArrow = el(`<div id="kq-cratearrow" class="kq-goldarrow" hidden><span>CRATE</span></div>`);
-  const split = el(`<div id="kq-split" hidden><i class="k"></i><i class="t"></i></div>`);
+  const split = el(`<div id="kq-split" hidden><i class="k"></i><i class="t"></i><b></b></div>`);
   const muteBtn = el(`<button id="kq-mute" type="button" title="Sound on/off (M)">🔊</button>`);
   let endSig = '';
   const banner = el(`<div id="kq-banner" hidden></div>`);
@@ -240,6 +247,13 @@ export function createHud({ mobile }) {
   }
 
   return {
+    // A short note that floats up from a spot in the world and fades (2 s).
+    floatText(camera, x, y, z, text) {
+      const s = project(camera, x, y, z);
+      const n = el(`<div class="kq-float"></div>`);
+      n.textContent = text; at(n, s.sx, s.sy);
+      setTimeout(() => n.remove(), 2100);
+    },
     // Is a menu open that a controller should drive?
     padMenuOpen() {
       const root = padRoot();
@@ -429,12 +443,20 @@ export function createHud({ mobile }) {
                                      state.healIn > 0 ? `REPAIR ×${TUNING.deathRepairBoost} ${Math.ceil(state.healIn)}s` : ''].filter(Boolean).join(' · ')
           : '';
       }
-      // Evacuation: one bar split three ways (stomped · still in the city · escaped)
-      split.hidden = !(state.mode === 'evac' && (playing || state.phase === 'ended'));
-      if (!split.hidden) {
+      // Evacuation: one bar split three ways (stomped · still in the city · escaped).
+      // Save the City!: the city's health, with the line the kaiju must push it below.
+      split.hidden = !((state.mode === 'evac' || state.mode === 'race') && (playing || state.phase === 'ended'));
+      split.classList.toggle('city', state.mode === 'race');
+      if (!split.hidden && state.mode === 'evac') {
         const P = TUNING.evacPool;
         split.querySelector('.k').style.width = `${state.stomped / P * 100}%`;
         split.querySelector('.t').style.width = `${state.evacuated / P * 100}%`;
+        split.style.setProperty('--line', '50%');
+      } else if (!split.hidden) {
+        split.querySelector('.k').style.width = '0%';
+        split.querySelector('.t').style.width = `${Math.max(0, Math.min(1, state.cityHp)) * 100}%`;
+        split.style.setProperty('--line', `${(1 - TUNING.cityLoseAt) * 100}%`);
+        split.querySelector('b').textContent = `CITY ${Math.round(state.cityHp * 100)}%`;
       }
       // gold arrows to the hill / the crate when they're off screen (everyone)
       if (playing && state.mode === 'koth') pointEdge(hillArrow, camera, state.hillX, 0, state.hillZ);
@@ -460,8 +482,8 @@ export function createHud({ mobile }) {
           : state.mode === 'evac'
           ? (kaiju ? `EVACUATION<small>Stomp ${half} of the ${TUNING.evacPool} civilians before they reach the green exits</small>`
                    : `EVACUATION<small>Get ${half} of the ${TUNING.evacPool} civilians to the green exits · wall off the kaiju with roadblocks</small>`)
-          : kaiju ? `SMASH!<small>Destroy buildings and crush tanks for points · ${k.smash} smash · ${k.boost} boost · grab the crate</small>`
-                  : `HOLD THE CITY<small>Repair damaged buildings and gun down the kaiju for points · ${k.block} roadblock · grab the crate</small>`;
+          : kaiju ? `SMASH!<small>Wreck the city below ${Math.round(TUNING.cityLoseAt * 100)}% before time runs out · ${k.smash} smash · ${k.boost} boost · grab the crate</small>`
+                  : `SAVE THE CITY!<small>Keep the city above ${Math.round(TUNING.cityLoseAt * 100)}%: repair and rebuild, gun down the kaiju · ${k.block} roadblock · grab the crate</small>`;
       }
       banner.hidden = !b; banner.innerHTML = b; banner.classList.toggle('big', big);
 
@@ -476,7 +498,7 @@ export function createHud({ mobile }) {
           ? [...state.players.values()].sort((a, b) => b.score - a.score).map(p => `${esc(p.name)} ${pts(p.score)}`).join(' · ')
           : state.mode === 'evac'
           ? `Stomped ${state.stomped} · Evacuated ${state.evacuated} (of ${TUNING.evacPool})`
-          : `Kaiju ${pts(state.kaijuScore)} · Tanks ${pts(state.tankScore)}`;
+          : `City ${Math.round(state.cityHp * 100)}% (kaiju needed ≤ ${Math.round(TUNING.cityLoseAt * 100)}%) · Kaiju ${pts(state.kaijuScore)} · Tanks ${pts(state.tankScore)}`;
         const sig = JSON.stringify([w, youWon, detail, Math.ceil(state.clock), state.mode]);
         if (sig !== endSig) {
           endSig = sig;

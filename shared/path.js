@@ -42,3 +42,32 @@ export function steer(p, path) {
   if (Math.abs(dx) > Math.abs(dz)) return { x: Math.sign(dx), z: Math.abs(dz) > 0.25 ? Math.sign(dz) * 0.3 : 0 };
   return { x: Math.abs(dx) > 0.25 ? Math.sign(dx) * 0.3 : 0, z: Math.sign(dz) };
 }
+
+// Cheapest path (Dijkstra) from (sx,sz) to (gx,gz) over walkable tiles, where
+// cost(x, z) is the price of stepping onto a tile (default 1).
+// opts: { destroyed, blocked, cost }
+export function cheapest(city, role, sx, sz, gx, gz, opts = {}) {
+  const { destroyed, blocked = null, cost = () => 1 } = opts;
+  const W = city.width, key = (x, z) => z * W + x;
+  const best = new Map([[key(sx, sz), 0]]), prev = new Map([[key(sx, sz), -1]]);
+  const heap = [[0, sx, sz]];   // binary min-heap on cost
+  const push = (e) => { heap.push(e); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+  while (heap.length) {
+    const [d, x, z] = pop();
+    if (d > (best.get(key(x, z)) ?? Infinity)) continue;
+    if (x === gx && z === gz) {
+      const path = [];
+      let k = key(x, z);
+      while (k !== -1) { path.unshift({ x: k % W, z: Math.floor(k / W) }); k = prev.get(k); }
+      return path;
+    }
+    for (const [dx, dz] of DIRS) {
+      const nx = x + dx, nz = z + dz;
+      if (!tileWalkable(city, role, nx, nz, destroyed, blocked)) continue;
+      const nd = d + cost(nx, nz), nk = key(nx, nz);
+      if (nd < (best.get(nk) ?? Infinity)) { best.set(nk, nd); prev.set(nk, key(x, z)); push([nd, nx, nz]); }
+    }
+  }
+  return null;
+}

@@ -28,7 +28,7 @@ export class KaijuRoom extends Room {
     this.setMetadata({ code: state.code });
     if (state.private) this.setPrivate(true);
     state.phase = 'lobby'; state.clock = 0; state.winner = '';
-    state.kaijuScore = 0; state.tankScore = 0; state.kaijuSpeed = 0;
+    state.kaijuScore = 0; state.tankScore = 0; state.kaijuSpeed = 0; state.cityHp = 1;
     state.mode = ''; state.hillX = 0; state.hillZ = 0; state.hillIn = 0; state.target = 0; state.evacuated = 0; state.stomped = 0;
     state.bonus = ''; state.bonusIn = 0; state.healIn = 0; state.crateOn = false; state.crateX = 0; state.crateZ = 0; state.crateIn = 0;
     this.setState(state);
@@ -55,6 +55,7 @@ export class KaijuRoom extends Room {
     if (process.env.KQ_TEST) {
       this.onMessage('debugTeleport', (client, msg) => this.game.teleport(client.sessionId, Number(msg?.x), Number(msg?.z)));
       this.onMessage('debugCrate', () => this.game.spawnCrate());
+      this.onMessage('debugHeal', () => this.game.healCity());
     }
     this.onMessage('mode', (client, msg) => this.game.setMode(client.sessionId, String(msg?.mode || '')));
     // Anyone can remove another player from the lobby (for ghosts / old tabs).
