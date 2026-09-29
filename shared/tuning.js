@@ -19,8 +19,12 @@ export const TUNING = {
   //  Ranges are measured centre-to-centre in tiles. A street is 1 tile.
   // ───────────────────────────────────────────────────────────────
 
-  // Kaiju SMASH (SPACE / phone SMASH) — hits a building, a roadblock, or (King of
-  // the Hill) another kaiju. Damage to buildings stays until a tank repairs it.
+  // Kaiju SMASH — no button: hold a direction into a building or roadblock (or,
+  // in King of the Hill, toward another kaiju in reach), or tap a building on a
+  // phone. Damage to buildings stays until a tank repairs it.
+  smashPushDelay:     0.25,  // seconds of pushing before the first smash (a shorter push
+                             // just nudges you round corners). Needs a clear push: about
+                             // 63° or more off the street's direction.
   strikeDamage:       10,    // building HP removed per smash
   strikeRange:        1,     // how far the kaiju can reach a building, tiles
                              // (1 = the building right beside it, 1.5 = diagonals too,
@@ -174,7 +178,19 @@ export const TUNING = {
   mobileMarkers:      true,  // arrows over the kaiju + other tanks (phone tanks only)
   viewTilesMobileKaiju: 15,  // ZOOM for a kaiju on a phone
   joystickSnap:       true,  // joystick snaps to the 4 street directions
-  joystickDeadzone:   0.25,  // share of the joystick that does nothing (0–1)
+  joystickDeadzone:   0.2,   // share of the joystick that does nothing (0–1)
+  stickRadiusPx:      60,    // floating stick: how far the thumb travels for full push, pixels
+                             // (drag further and the stick follows your thumb)
+  stickSnapHysteresisDeg: 10, // a snapped stick keeps its street until you're this many
+                             // degrees past the halfway line (stops flicker)
+  tapSlopPx:          12,    // a touch that moves less than this …
+  tapMaxMs:           250,   // … and lifts within this many ms is a TAP (walk there); else the stick
+  tapReplanSeconds:   1,     // a tap route re-plans this often (roadblocks, rubble)
+  mobileCornerLookahead: 1.0, // phones: cornerLookahead (see ADVANCED)
+  mobileCornerNudge:  0.45,  // phones: cornerNudge (see ADVANCED)
+  clientPrediction:   true,  // your own unit moves the instant you press (then eases onto
+                             // the server's position). false = wait for the server, the old way
+  predictionLag:      0.25,  // seconds of network lag the prediction allows before correcting
   mobileShadows:      false, // shadows look nicer but cost a lot on phones
   mobilePixelRatio:   1.5,   // render sharpness cap on phones (lower = faster)
 

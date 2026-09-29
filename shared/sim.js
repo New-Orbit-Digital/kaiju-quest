@@ -55,7 +55,9 @@ export function spotClear(city, role, x, z, r, destroyed, blocked) {
 
 // Advance one unit by one tick.
 // unit: { role, x, z, rot, moving }   input: { x, z } world direction, length ≤ 1
-export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked) {
+// help (optional): { lookahead, nudge } overrides TUNING.cornerLookahead / cornerNudge (phones get more help).
+export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked, help = null) {
+  const lookahead = help?.lookahead ?? TUNING.cornerLookahead, nudge = help?.nudge ?? TUNING.cornerNudge;
   let ix = Number(input?.x) || 0, iz = Number(input?.z) || 0;
   const len = Math.hypot(ix, iz);
   if (len < 0.01) return false;
@@ -72,11 +74,11 @@ export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked) {
   let mx = ix, mz = iz;
   const probe = 0.55 + (TUNING.streetWiden || 0) - r;   // just past the lane's free space
   const axisX = Math.abs(ix) > Math.abs(iz) * 2, axisZ = Math.abs(iz) > Math.abs(ix) * 2;
-  if (unit.moving && (axisX || axisZ) && TUNING.cornerLookahead > 0) {
+  if (unit.moving && (axisX || axisZ) && lookahead > 0) {
     const fx = Math.round(Math.sin(unit.rot)), fz = Math.round(Math.cos(unit.rot));
     const perpendicular = axisX ? (fz !== 0 && fx === 0) : (fx !== 0 && fz === 0);
     if (perpendicular && !clear(unit.x + ix * probe, unit.z + iz * probe)) {
-      for (let d = 0.05; d <= TUNING.cornerLookahead; d += 0.05) {
+      for (let d = 0.05; d <= lookahead; d += 0.05) {
         const ax = unit.x + fx * d, az = unit.z + fz * d;
         if (!clear(ax, az)) break;                       // wall ahead, no opening
         const ox = Math.round(ax), oz = Math.round(az);  // snap to the lane centre of the side street
@@ -115,7 +117,7 @@ export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked) {
     const lanes = [Math.floor(cur), Math.ceil(cur)].sort((a, b) => Math.abs(a - cur) - Math.abs(b - cur));
     for (const lane of lanes) {
       const off = lane - cur;
-      if (Math.abs(off) < 1e-3 || Math.abs(off) > TUNING.cornerNudge) continue;
+      if (Math.abs(off) < 1e-3 || Math.abs(off) > nudge) continue;
       const lx = axisZ ? lane : unit.x, lz = axisX ? lane : unit.z;
       if (!clear(lx + ix * probe, lz + iz * probe)) continue;   // no opening in that lane
       const s = Math.sign(off) * Math.min(Math.abs(off), step);

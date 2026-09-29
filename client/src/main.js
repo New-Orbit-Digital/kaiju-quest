@@ -11,6 +11,8 @@ import { EXITS } from '../../shared/map.js';
 import { MODE_NAMES, BETA_MODES } from '../../shared/game.js';
 import { createHud } from './hud.js';
 import { createTouchControls } from './touch.js';
+import { createCivilianPaths, createRouteMarks } from './paths.js';
+import { stepUnit } from '../../shared/sim.js';
 
 const params = new URLSearchParams(location.search);
 const OFFLINE = !!globalThis.__KQ_OFFLINE || params.has('offline');
@@ -76,7 +78,9 @@ const statusEl = document.getElementById('status');
 const setStatus = (t) => { statusEl.textContent = t; statusEl.hidden = !t; };
 const hud = createHud({ mobile: MOBILE });
 const fx = initFx(scene);
-const touch = MOBILE ? createTouchControls({ onBlock: () => room?.send('block'), onSmash: () => room?.send('action'), onBoost: () => room?.send('boost') }) : null;
+const touch = MOBILE ? createTouchControls({ surface: canvas, onTap: (x, y) => tapAt(x, y), onBlock: () => room?.send('block'), onBoost: () => room?.send('boost') }) : null;
+const civPaths = createCivilianPaths(scene);
+let routeMarks = null;   // needs the city: made in boot()
 const roadblocks = createRoadblocks(scene, (slot) => TANK_COLOURS[Math.max(0, slot) % TANK_COLOURS.length]);
 const hill = createHill(scene, TUNING.hillRadius);
 const crate = createCrate(scene);
@@ -96,6 +100,7 @@ async function boot() {
   buildingObjects = built.buildingObjects;
   damage = createBuildingDamage(scene, city, buildingObjects);
   exits = createExits(scene, EXITS, city);
+  routeMarks = createRouteMarks(scene, city);
   camTarget.set((city.width - 1) / 2, 0, (city.depth - 1) / 2);
   if (OFFLINE) {
     room = createLocalRoom();
@@ -145,7 +150,7 @@ async function boot() {
   setStatus('');
   room.onMessage('fx', onFx);
   if (OFFLINE) hud.onLobby({ mode: (m) => room.send('mode', { mode: m }) });
-  window.__kq = { room, units, civilians, camera, scene, renderer, mobile: MOBILE }; // debugging + screenshots
+  window.__kq = { room, units, civilians, camera, scene, renderer, mobile: MOBILE, city, moveVector, civPaths, touch }; // debugging + screenshots
 }
 
 // ── Effects from the server ────────────────────────────────
@@ -237,8 +242,8 @@ function onFx(e) {
 }
 
 // ── Sync game state → scene ────────────────────────────────
-function follow(entry, p, dt) {
-  const k = Math.min(1, dt * 15);
+function follow(entry, p, dt, exact = false) {
+  const k = exact ? 1 : Math.min(1, dt * 15);
   const d = entry.display;
   if (Math.hypot(p.x - d.x, p.z - d.z) > 3) { d.x = p.x; d.z = p.z; } // teleports (respawn) snap
   d.x += (p.x - d.x) * k; d.z += (p.z - d.z) * k;
@@ -265,8 +270,9 @@ function syncUnits(dt) {
     // a kaiju lies down while it's out, and stands back up when it respawns / a round starts
     if (p.role === 'kaiju') { if (p.alive && u.view.dead) u.view.revive(); else if (!p.alive && !u.view.dead) u.view.die(); }
     u.view.object.visible = p.role === 'kaiju' || p.alive;
-    follow(u, p, dt);
-    u.view.update(dt, p.moving);
+    if (id === room.sessionId && predictMine(u, p, dt)) follow(u, u.pred, dt, true);
+    else follow(u, p, dt);
+    u.view.update(dt, id === room.sessionId && u.pred ? u.pred.moving || p.moving : p.moving);
     if (id === room.sessionId) u.view.setCharge(p.role === 'kaiju'
       ? 1 - p.boostIn / TUNING.boostCooldown : 1 - p.blockIn / TUNING.roadblockCooldown, dt);
   });
@@ -298,7 +304,7 @@ function updateSideHud(me) {
   const k = keyNames();
   const mode = room.state.mode;
   const help = me.role === 'kaiju'
-    ? `${k.move} move · ${k.smash} smash · ${k.boost} boost<br>` + (mode === 'koth'
+    ? `${k.move} move · stomp on buildings to smash${MOBILE ? ' (or tap one)' : ''} · ${k.boost} boost<br>` + (mode === 'koth'
       ? `Smash buildings (×${TUNING.hillMultiplier} in the red zone) and other kaiju`
       : `Walk into tanks${mode === 'evac' ? ' & civilians' : ''} to crush them`)
     : `${k.move} move · turret fires on its own (not through buildings)<br>${k.block} drop roadblock<br>` +
@@ -311,6 +317,68 @@ function updateSideHud(me) {
     `<span class="dim">${help}` +
     (room.offline ? (usingGamepad() ? `<br>Y swap unit` : `<br>Tab swap unit · N mode · C camera · V controls`) : '') +
     `<br>M sound ${isMuted() ? 'off' : 'on'}</span>`;
+}
+
+// ── Tap to move (phones) ───────────────────────────────────
+// A tap on a standing building (not one faded out in front of you) targets that
+// building; anywhere else, the ground tile under the finger.
+const raycaster = new THREE.Raycaster();
+const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+function tapAt(clientX, clientY) {
+  if (!room || !city) return;
+  const me = room.state?.players?.get(room.sessionId);
+  if (!me || !me.alive) return;
+  const ndc = new THREE.Vector2((clientX / innerWidth) * 2 - 1, -(clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hp = room.state.buildingHp;
+  const targets = [...buildingObjects.entries()]
+    .filter(([id, g]) => (hp?.[id] ?? 1) > 0 && (g.userData.fade ?? 1) > 0.5 && city.buildings[id].kind !== 'park')
+    .map(([, g]) => g);
+  const hit = raycaster.intersectObjects(targets, true)[0];
+  let tile = null;
+  if (hit) {
+    let o = hit.object;
+    while (o && o.userData.buildingId === undefined) o = o.parent;
+    if (o) { const b = city.buildings[o.userData.buildingId]; tile = { x: b.x, z: b.z }; }
+  }
+  if (!tile) {
+    const pt = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(ground, pt)) return;
+    tile = { x: Math.round(pt.x), z: Math.round(pt.z) };
+  }
+  room.send('moveTo', tile);
+  fx.dust(tile.x, tile.z, 0.25, 0xf2f5f8);
+}
+
+// ── Client-side prediction (your own unit) ─────────────────
+// Your unit moves the moment you press, using the same movement code as the
+// server, then eases onto the server's position. Error inside the expected lag
+// (speed × predictionLag) is left alone so the unit doesn't get pulled back.
+const phoneHelp = { lookahead: TUNING.mobileCornerLookahead, nudge: TUNING.mobileCornerNudge };
+function predictMine(u, p, dt) {
+  const st = room.state;
+  const skip = !TUNING.clientPrediction || room.offline || !p.alive || p.route || p.boosting || st.phase === 'ended' || !city;
+  if (skip) { u.pred = null; return false; }
+  if (!u.pred || u.pred.role !== p.role || Math.hypot(u.pred.x - p.x, u.pred.z - p.z) > 2) {
+    u.pred = { role: p.role, x: p.x, z: p.z, rot: p.rot, moving: p.moving };
+  }
+  const kaiju = p.role === 'kaiju';
+  const hpList = st.buildingHp;
+  const destroyed = (id) => city.buildings[id].kind !== 'park' && hpList[id] <= 0;
+  const blocked = kaiju ? (tx, tz) => st.roadblocks.has(`${tx},${tz}`) : null;
+  const speed = kaiju ? st.kaijuSpeed : TUNING.tankSpeed;
+  const v = moveVector();
+  const pushing = Math.hypot(v.x, v.z) > 0.01;
+  u.pred.moving = stepUnit(city, u.pred, pushing ? v : null, dt, speed, kaiju ? TUNING.kaijuRadius : TUNING.tankRadius,
+    destroyed, blocked, MOBILE ? phoneHelp : null);
+  const ex = p.x - u.pred.x, ez = p.z - u.pred.z, e = Math.hypot(ex, ez);
+  const budget = pushing ? speed * TUNING.predictionLag : 0;
+  if (e > budget) {
+    const k = (1 - budget / e) * Math.min(1, dt * (pushing ? 6 : 8));
+    u.pred.x += ex * k; u.pred.z += ez * k;
+  }
+  if (!pushing) u.pred.rot = p.rot;
+  return true;
 }
 
 // ── Input → server ─────────────────────────────────────────
@@ -328,8 +396,9 @@ onInputChange(() => sendInput(performance.now())); // react on the key event, no
 
 function myRole() { return room?.state?.players?.get(room.sessionId)?.role; }
 
-// Controller buttons (standard layout). A / ✕ / Switch-B (0) = kaiju smash or
-// tank roadblock. Kaiju boost = right face button (1), RB/R1 (5) or RT/R2 (7).
+// Controller buttons (standard layout). A / ✕ / Switch-B (0) = tank roadblock
+// (the kaiju smashes by pushing into buildings). Kaiju boost = right face
+// button (1), RB/R1 (5) or RT/R2 (7).
 function gamepadButtons() {
   const pressed = pollGamepad();
   // Menus (join screen, lobby, end screen): the D-pad moves between buttons and
@@ -348,7 +417,7 @@ function gamepadButtons() {
   if (!room || !pressed.length) return;
   const tank = myRole() === 'tank';
   for (const b of pressed) {
-    if (b === 0) room.send(tank ? 'block' : 'action');
+    if (b === 0 && tank) room.send('block');
     else if (!tank && (b === 1 || b === 5 || b === 7)) room.send('boost');
     else if (b === 9 && !room.offline && room.state.phase === 'lobby') { // Start / Menu / +: toggle ready
       room.send('ready', { ready: !room.state.players.get(room.sessionId)?.ready });
@@ -364,12 +433,12 @@ function clearUnits() {
 }
 addEventListener('keydown', (e) => {
   if (!room) return;
-  // Kaiju: Space = smash, Shift = boost. Tank: Space = roadblock.
+  // Kaiju: Shift = boost (it smashes by pushing into buildings). Tank: Space = roadblock.
   const isShift = e.code === 'ShiftLeft' || e.code === 'ShiftRight';
   if (e.code === 'Space') e.preventDefault();
   if (!e.repeat && (e.code === 'Space' || isShift)) {
     const tank = myRole() === 'tank';
-    if (e.code === 'Space') room.send(tank ? 'block' : 'action');
+    if (e.code === 'Space' && tank) room.send('block');
     else if (!tank) room.send('boost');
   }
   if (e.code === 'KeyM' && !e.repeat) { toggleMute(); hud.setMuted(isMuted()); }
@@ -444,6 +513,7 @@ function frame(ts) {
   hill.sync(room?.state, dt);
   crate.sync(room?.state, dt);
   exits?.sync(room?.state);
+  civPaths.sync(room?.state, civilians);
   updateSound();
 
   const me = room?.state?.players?.get(room.sessionId);
@@ -475,6 +545,7 @@ function frame(ts) {
     codeInUrl = true;
     try { const u = new URL(location.href); u.searchParams.set('room', room.state.code); u.searchParams.delete('create'); u.searchParams.delete('name'); history.replaceState(null, '', u); } catch {}
   }
+  if (routeMarks) routeMarks.sync(me, mine?.display || me || { x: 0, z: 0 }, dt);
   if (me) {
     updateSideHud(me);
     hud.update({ state: room.state, me, myId: room.sessionId, camera, units });

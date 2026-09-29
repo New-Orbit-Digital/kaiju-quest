@@ -44,7 +44,8 @@ test('two clients over the network: roles, sync, countdown, combat events', asyn
     a.send('input', { x: 1, z: 0 }); await wait(600); a.send('input', { x: 0, z: 0 });
     await wait(150);
     assert.ok(b.state.players.get(a.sessionId).x > kx0 + 1, 'tank client sees kaiju move');
-    a.send('action');
+    // push-to-smash: hold north into the tower block beside row 12 (there's no smash message any more)
+    a.send('input', { x: 0, z: -1 }); await wait(700); a.send('input', { x: 0, z: 0 });
     await wait(200);
     assert.ok(fx.some(m => m.type === 'strike'), 'strike event broadcast');
 

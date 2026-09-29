@@ -21,7 +21,7 @@ export function createLocalRoom() {
     state,
     send(type, msg) {
       if (type === 'input') game.input(room.sessionId, msg);
-      else if (type === 'action') game.action(room.sessionId);
+      else if (type === 'moveTo') game.moveTo(room.sessionId, msg);
       else if (type === 'block') game.block(room.sessionId);
       else if (type === 'boost') game.boost(room.sessionId);
       else if (type === 'mode') {   // N key / picker: switch mode now and restart the round

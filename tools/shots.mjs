@@ -39,12 +39,17 @@ const me = (p) => p.evaluate(() => { const r = window.__kq.room, s = r.state, m 
 const hold = async (p, key, ms) => { await p.keyboard.down(key); await sleep(ms); await p.keyboard.up(key); };
 async function until(cond, maxMs = 15000) { const t0 = Date.now(); while (!(await cond()) && Date.now() - t0 < maxMs) await sleep(40); }
 async function holdUntil(p, key, cond) { await p.keyboard.down(key); await until(cond); await p.keyboard.up(key); }
-async function stick(p, dx, dy, cond) {   // drag the on-screen joystick until cond() is true
-  const box = await p.locator('#kq-stick').boundingBox();
-  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+async function stick(p, dx, dy, cond) {   // drag a floating stick from mid-left of the screen until cond() is true
+  const vp = p.viewportSize();
+  const cx = vp.width * 0.3, cy = vp.height * 0.55;
   await p.mouse.move(cx, cy); await p.mouse.down(); await p.mouse.move(cx + dx, cy + dy, { steps: 4 });
   await until(cond); await p.mouse.up();
 }
+// Screen position of a ground tile (for taps)
+const tileOnScreen = (p, x, z) => p.evaluate(([x, z]) => {
+  const v = new window.__kq.camera.position.constructor(x, 0, z).project(window.__kq.camera);
+  return { x: (v.x + 1) / 2 * innerWidth, y: (1 - v.y) / 2 * innerHeight };
+}, [x, z]);
 const fps = (p) => p.evaluate(() => new Promise(res => { let n = 0; const t0 = performance.now();
   const f = () => { n++; if (performance.now() - t0 < 2000) requestAnimationFrame(f); else res(n / 2); }; requestAnimationFrame(f); }));
 
@@ -59,7 +64,8 @@ try {
   let k = await me(kaiju), t = await me(phone);
   check(k.role === 'kaiju' && t.role === 'tank' && t.mobile && t.isMobile, `roles: desktop=${k.role}, phone=${t.role} (mobile flag ${t.mobile})`);
   check(k.mode === 'race', `default mode is Save the City! (${k.mode})`);
-  check(await phone.locator('#kq-stick').isVisible() && await phone.locator('#kq-block').isVisible(), 'phone shows joystick + BLOCK button');
+  check(await phone.evaluate(() => document.getElementById('kq-stick').hidden) && await phone.locator('#kq-block').isVisible() && !(await phone.locator('#kq-smash').count()),
+    'phone shows BLOCK; the floating stick stays hidden until a drag; no SMASH button anywhere');
   check(!(await kaiju.locator('#kq-stick').count()), 'desktop has no touch controls');
 
   // ── Lobby ──
@@ -161,35 +167,53 @@ try {
   // damage = the sum of drops only (the tanks repair the worn Save the City! city meanwhile)
   const dropped = (a, b) => a.map((h, i) => Math.max(0, h - b[i])).reduce((x, y) => x + y, 0);
   const hpNow = () => kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
-  for (let i = 0; i < 3; i++) {   // one press per smash, waiting for each to land (slow software rendering)
-    await kaiju.keyboard.press('Space');
-    await until(async () => dropped(hp0, await hpNow()) >= 10 * (i + 1) - 0.01, 6000);
-    await sleep(600);              // past the smash cooldown
-  }
+  // SPACE no longer smashes
+  await kaiju.keyboard.press('Space'); await sleep(1500);
+  check(Math.round(dropped(hp0, await hpNow())) === 0, 'SPACE does not smash any more');
+  // push-to-smash: hold D (east, into the tower block) until 3 smashes have landed
+  await kaiju.keyboard.down('KeyD');
+  let wind = 0;
+  await until(async () => { wind = Math.max(wind, await kaiju.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).windup; })); return dropped(hp0, await hpNow()) >= 29.99; }, 20000);
+  await kaiju.keyboard.up('KeyD');
+  await sleep(400);
   const hp1 = await kaiju.evaluate(() => Array.from(window.__kq.room.state.buildingHp));
   const hit = Math.round(dropped(hp0, hp1));
-  check(hit === 30, `3 strikes took ${hit} building HP (expected 30)`);
-  // Controller: a fake standard-layout pad; A (button 0) = kaiju smash
+  check(hit >= 30 && hit % 10 === 0, `holding D into the towers smashed them: ${hit} building HP in 10s (wind-up seen ${wind.toFixed(2)})`);
+  // Controller: A (button 0) does nothing for the kaiju; pushing the stick into the tower smashes
   await kaiju.evaluate(() => {
-    const pad = (a) => ({ axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === 0 && a, value: i === 0 && a ? 1 : 0 })) });
-    window.__pad = pad(false);
+    const pad = (a, ax) => ({ axes: [ax, ax, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === 0 && a, value: i === 0 && a ? 1 : 0 })) });
+    window.__pad = pad(false, 0);
     navigator.getGamepads = () => [window.__pad];
-    window.__padPress = (a) => { window.__pad = pad(a); };
+    window.__padSet2 = (a, ax) => { window.__pad = pad(a, ax); };
   });
   await sleep(700);
-  await kaiju.evaluate(() => window.__padPress(true));
-  // keep the biggest drop seen: a tank may repair the smashed building straight back up
+  await kaiju.evaluate(() => window.__padSet2(true, 0));
+  await sleep(1500);
+  await kaiju.evaluate(() => window.__padSet2(false, 0));
+  check(Math.round(dropped(hp1, await hpNow())) === 0, 'controller A does not smash');
+  await kaiju.evaluate(() => window.__padSet2(false, 0.7));   // stick down-right on screen = world +x = east, into the towers
   let padHit = 0;
   await until(async () => (padHit = Math.max(padHit, Math.round(dropped(hp1, await hpNow())))) >= 10, 20000);
-  await kaiju.evaluate(() => window.__padPress(false));
-  check(padHit === 10, `controller A button smashed: ${padHit} building HP (expected 10)`);
+  await kaiju.evaluate(() => window.__padSet2(false, 0));
+  check(padHit >= 10, `controller stick pushed into the tower smashed it: ${padHit} building HP`);
   await kaiju.evaluate(() => { navigator.getGamepads = () => []; });
   await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-smash.png', timeout: 120000 });
 
   // Phone tank: joystick down-left on screen = south along the ring road → (0,3)
   await stick(phone, -45, 45, () => phone.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).z >= 2.7; }));
   t = await me(phone);
-  check(t.z > 2 && Math.abs(t.x) < 0.3, `joystick drove the tank down its street: (${t.x.toFixed(2)}, ${t.z.toFixed(2)})`);
+  check(t.z > 2 && Math.abs(t.x) < 0.3, `floating stick (screen-diagonal drag) drove the tank down its street: (${t.x.toFixed(2)}, ${t.z.toFixed(2)})`);
+  // tap-to-move: tap the street tile (0, 6); the route is planned, drawn and walked
+  const tap = await tileOnScreen(phone, 0, 6);
+  await phone.mouse.click(tap.x, tap.y);
+  await until(() => phone.evaluate(() => { const r = window.__kq.room; return !!r.state.players.get(r.sessionId).route; }), 8000);
+  const route = await phone.evaluate(() => { const r = window.__kq.room; return r.state.players.get(r.sessionId).route; });
+  // (the camera may still be gliding when the tap lands, so allow a tile either way)
+  const endTile = route.split(';').pop().split(',').map(Number);
+  check(endTile[0] === 0 && Math.abs(endTile[1] - 6) <= 1, `tap near (0,6) planned a street route: ${route}`);
+  await until(() => phone.evaluate(() => { const r = window.__kq.room; return !r.state.players.get(r.sessionId).route; }), 20000);
+  t = await me(phone);
+  check(Math.abs(t.z - endTile[1]) < 0.25 && Math.abs(t.x - endTile[0]) < 0.25, `tap-to-move arrived at the route's end: (${t.x.toFixed(2)}, ${t.z.toFixed(2)})`);
   // park it exactly at the row-3 corner (the slow renderer overshoots by a variable amount)
   await phone.evaluate(() => window.__kq.room.send('debugTeleport', { x: 0, z: 2.8 }));
   check(!(await phone.locator('#kq-boost').count()), 'phone tank has no boost button (tanks have no boost)');
@@ -202,6 +226,10 @@ try {
   await phone.screenshot({ path: 'docs/shots/p02-phone-edge-arrow.png', timeout: 120000 });
   check(await phone.evaluate(() => !document.getElementById('kq-edge').hidden), 'phone: edge arrow points to the off-screen kaiju');
 
+  // Phone marker over the kaiju: bring the kaiju onto the phone's screen first
+  await kaiju.evaluate(() => window.__kq.room.send('debugTeleport', { x: 6, z: 1 }));
+  await until(async () => (await phone.locator('.kq-marker:not([hidden])').count()) > 0, 20000);
+  const markerOnScreen = (await phone.locator('.kq-marker:not([hidden])').count()) > 0;
   // Kaiju: jump to row 3 (test hook; the slow software renderer makes key-held
   // distances unreliable), then walk west toward the tank with a Shift boost
   await kaiju.evaluate(() => window.__kq.room.send('debugTeleport', { x: 9, z: 3 }));
@@ -216,7 +244,8 @@ try {
     const fx = await kaiju.evaluate(() => window.__fx);
     shotSeen ||= fx.includes('shot');
     stomped = fx.includes('tankDown');
-    if (shotSeen && !markerSeen && (await phone.locator('.kq-marker:not([hidden])').count()) > 0) {
+    // (any time in the chase: with a boost the stomp can land before the first shot is logged)
+    if (!markerSeen && (markerOnScreen || (await phone.locator('.kq-marker:not([hidden])').count()) > 0)) {
       markerSeen = true;
       await phone.screenshot({ path: 'docs/shots/p02-phone-marker-firing.png', timeout: 120000 });
       await kaiju.screenshot({ path: 'docs/shots/p02-kaiju-under-fire.png', timeout: 120000 });
@@ -224,6 +253,7 @@ try {
   }
   await kaiju.keyboard.up('KeyA');
   k = await me(kaiju); t = await me(phone);
+  console.log(`INFO  after the chase: kaiju (${k.x.toFixed(2)}, ${k.z.toFixed(2)}), tank (${t.x.toFixed(2)}, ${t.z.toFixed(2)}) alive=${t.alive}`);
   check(shotSeen && k.hp < k.max, `tank auto-fired: kaiju HP ${k.hp.toFixed(2)}/${k.max}`);
   check(markerSeen, 'phone: marker shown over the kaiju');
   check(!(await kaiju.locator('.kq-marker:not([hidden])').count()) && !(await kaiju.locator('#kq-edge:not([hidden])').count()),

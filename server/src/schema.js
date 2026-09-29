@@ -4,6 +4,7 @@ export const Civilian = schema({
   x: t.number(), z: t.number(), rot: t.number(),
   moving: t.boolean(),
   look: t.number(),     // picks the shirt colour
+  path: t.string(),     // planned route "x,z;x,z;…" (drawn faintly on the ground)
 }, 'Civilian');
 
 export const Roadblock = schema({
@@ -32,6 +33,10 @@ export const Player = schema({
   repairing: t.boolean(), // tank is fixing a building right now (drives the repair sound)
   hp: t.number(), maxHp: t.number(), // kaiju health
   score: t.number(),    // personal points (King of the Hill ranks by this)
+  route: t.string(),    // tap-to-move route "x,z;x,z;…" ('' = none); only its owner draws it
+  routeBid: t.number(), // building a tap route is heading to smash (-1 = none)
+  windup: t.number(),   // kaiju push-to-smash wind-up 0…1 (1 = smashing)
+  aimX: t.number(), aimZ: t.number(), // tile being pushed on / smashed
 }, 'Player');
 
 export const MatchState = schema({

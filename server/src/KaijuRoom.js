@@ -45,7 +45,8 @@ export class KaijuRoom extends Room {
       this.bots.add(msg?.role === 'kaiju' ? 'kaiju' : 'tank');
     });
     this.onMessage('input', (client, msg) => this.game.input(client.sessionId, msg));
-    this.onMessage('action', (client) => this.game.action(client.sessionId));
+    // (no 'action' message: the kaiju smashes by pushing into things or tapping them)
+    this.onMessage('moveTo', (client, msg) => this.game.moveTo(client.sessionId, msg));
     this.onMessage('block', (client) => this.game.block(client.sessionId));
     this.onMessage('boost', (client) => this.game.boost(client.sessionId));
     this.onMessage('ready', (client, msg) => this.game.setReady(client.sessionId, !!msg?.ready));

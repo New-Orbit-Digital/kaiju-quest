@@ -273,6 +273,9 @@ test('roadblocks: drop in front of the tank across the road, block only the kaij
   place(K, tx - 2, 3); K.rot = Math.PI / 2;
   g.input('K', { x: 1, z: 0 }); run(1.5); g.input('K', { x: 0, z: 0 });
   assert.ok(K.x < tx - 0.5, `kaiju blocked at x=${K.x.toFixed(2)}`);
+  // holding the push into it smashes it (push-to-smash); top it back up for the count below
+  assert.ok(state.roadblocks.get(`${tx},3`).hits < scaled('roadblockHits', 1), 'pushing into a roadblock smashes it');
+  state.roadblocks.get(`${tx},3`).hits = scaled('roadblockHits', 1);
   const kx = K.x; place(K, 24, 12);          // step the kaiju aside while the tank drives through
   place(T0, tx + 1, 3);
   g.input('T0', { x: -1, z: 0 }); run(0.8); g.input('T0', { x: 0, z: 0 });

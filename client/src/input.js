@@ -26,8 +26,8 @@ export function usingGamepad() { return lastDevice === 'gamepad'; }
 // Button names for help text, following the device last used.
 export function keyNames() {
   return usingGamepad()
-    ? { move: 'STICK', smash: 'A', block: 'A', boost: 'RB' }
-    : { move: 'WASD', smash: 'SPACE', block: 'SPACE', boost: 'SHIFT' };
+    ? { move: 'STICK', block: 'A', boost: 'RB' }
+    : { move: 'WASD', block: 'SPACE', boost: 'SHIFT' };
 }
 
 // Call once per frame. Returns the button indices newly pressed this frame.
@@ -116,8 +116,10 @@ function touchToWorld(t, snap) {
   const len = Math.hypot(x, z);
   if (len < 1e-3) return { x: 0, z: 0 };
   if (snap) {
+    // keep the current street until the stick is stickSnapHysteresisDeg past the halfway (45°) line
     const ax = Math.abs(x), az = Math.abs(z);
-    if (ax > az * 1.2) snapAxis = 'x'; else if (az > ax * 1.2) snapAxis = 'z';
+    const ratio = Math.tan((45 + TUNING.stickSnapHysteresisDeg) * Math.PI / 180);
+    if (ax > az * ratio) snapAxis = 'x'; else if (az > ax * ratio) snapAxis = 'z';
     if (snapAxis === 'x') { x = Math.sign(x) || 1; z = 0; } else { z = Math.sign(z) || 1; x = 0; }
   } else if (len > 1) { x /= len; z /= len; }
   return { x: Math.round(x * 1000) / 1000, z: Math.round(z * 1000) / 1000 };

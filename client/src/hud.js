@@ -478,11 +478,11 @@ export function createHud({ mobile }) {
         const kaiju = me.role === 'kaiju';
         const half = Math.floor(TUNING.evacPool / 2) + 1;
         b = state.mode === 'koth'
-          ? `KING OF THE HILL<small>Everyone's a kaiju · smash buildings (×${TUNING.hillMultiplier} in the red zone) and each other · first to ${state.target} wins</small>`
+          ? `KING OF THE HILL<small>Everyone's a kaiju · stomp on buildings to smash (×${TUNING.hillMultiplier} in the red zone) · push into other kaiju to hit them · first to ${state.target} wins</small>`
           : state.mode === 'evac'
           ? (kaiju ? `EVACUATION<small>Stomp ${half} of the ${TUNING.evacPool} civilians before they reach the green exits</small>`
                    : `EVACUATION<small>Get ${half} of the ${TUNING.evacPool} civilians to the green exits · wall off the kaiju with roadblocks</small>`)
-          : kaiju ? `SMASH!<small>Wreck the city below ${Math.round(TUNING.cityLoseAt * 100)}% before time runs out · ${k.smash} smash · ${k.boost} boost · grab the crate</small>`
+          : kaiju ? `SMASH!<small>Stomp on buildings to smash · wreck the city below ${Math.round(TUNING.cityLoseAt * 100)}% before time runs out · ${k.boost} boost · grab the crate</small>`
                   : `SAVE THE CITY!<small>Keep the city above ${Math.round(TUNING.cityLoseAt * 100)}%: repair and rebuild, gun down the kaiju · ${k.block} roadblock · grab the crate</small>`;
       }
       banner.hidden = !b; banner.innerHTML = b; banner.classList.toggle('big', big);

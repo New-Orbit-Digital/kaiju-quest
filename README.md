@@ -1,6 +1,10 @@
 # Kaiju Quest
 
-Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to six players drive **tanks**, repairing the city and gunning the kaiju down. WASD + Space (kaiju smash / tank roadblock) + Shift (kaiju boost), or a controller (left stick moves, A smashes / drops a roadblock, RB boosts), or a phone (joystick + buttons, either side). Tanks only fire when no building is in the way.
+Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to six players drive **tanks**, repairing the city and gunning the kaiju down. WASD + Space (tank roadblock) + Shift (kaiju boost), or a controller (left stick moves, A drops a roadblock, RB boosts), or a phone (either side). Tanks only fire when no building is in the way.
+
+**The kaiju has no smash button:** it stomps on buildings by pushing into them. Hold a direction into a building or roadblock for a quarter of a second (`smashPushDelay`) and it smashes it every strike cooldown for as long as you hold; a shorter push still slides you round corners. In King of the Hill, pushing toward another kaiju in reach hits it.
+
+**Phones:** tap anywhere to walk there along the streets (as the kaiju, tap a building to walk up and smash it to rubble; your route and target show on the ground). Drag anywhere for a floating stick that appears under your thumb, follows it if you drag past its edge, snaps to the streets as drawn on screen, and cancels any tap route. BLOCK (tanks) / BOOST (kaiju) sit bottom right. Phones get a little more cornering help (`mobileCornerLookahead`, `mobileCornerNudge`). On every device your own unit moves the instant you press (`clientPrediction`) and eases onto the server's position.
 
 **Play:** https://justbost.com/kaiju-quest/ (the page; the game server runs on Render at https://kaiju-quest.onrender.com, which also still serves the page). The free server sleeps when idle, so the first join can take about a minute.
 
@@ -8,7 +12,7 @@ Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocki
 
 - **Save the City!** (default): the city starts part-damaged (more tanks = more damage) and the round lasts 30 s per player. Tanks repair damaged buildings and rebuild rubble; the kaiju smashes. At the buzzer the kaiju wins if the city's total health is at or below 50%, otherwise the tanks win (the city-health bar shows the 50% line). Points still count up for bragging rights. The kaiju respawns after a kill (tanks then repair at double speed for 10 s). A neutral **bonus crate** drifts toward the kaiju (faster with more tanks); grabbing it doubles your side's damage or repair speed (and points) and halves the other's for 20 s.
 - **King of the Hill**: everyone is a colour-tinted kaiju (phones too). Smash buildings (×3 inside the red zone, which jumps every 20 s with a red-alert siren) and each other. The round lasts 30 s per player and the first to 250 points per player wins outright; otherwise top score at the buzzer.
-- **Evacuation**: a fixed crowd of 60 civilians each walks to the exit farthest from where it appeared (green pads mid-edge), preferring streets the tanks have roadblocked and swerving around the kaiju only when it's within 10 tiles. First side past half the crowd (stomped vs escaped) wins. A crowd murmur gets louder the more civilians are around you.
+- **Evacuation**: a fixed crowd of 60 civilians each walks to the exit farthest from where it appeared (green pads mid-edge), preferring streets the tanks have roadblocked and swerving around the kaiju only when it's within 10 tiles. Each civilian's planned route shows as a faint green line on the ground; routes that share a street merge into one line. First side past half the crowd (stomped vs escaped) wins. A crowd murmur gets louder the more civilians are around you.
 
 Your cooldown (kaiju boost / tank roadblock) shows on the coloured ring under your unit: it drains to a pale ring, refills, and flashes when ready. Tanks drop roadblocks in front of them, at most 3 each (a 4th removes the oldest, with a floating note); roadblock strength scales with the number of tanks (10 smashes with 1 tank down to 4 with 6).
 
@@ -61,6 +65,7 @@ Restart the server after changing `shared/`. Vite reloads the client on its own.
 ```bash
 npm test          # 49 tests: rules, movement, collisions, scaling + a live two-client server test
 npm run shots     # builds the client, plays a short round with a desktop kaiju vs an emulated-phone tank, saves docs/shots/p02-*.png
+node tools/touchshots.mjs   # offline phone kaiju: floating stick, tap-a-building smash, Evacuation path network (docs/shots/pm-*.png)
 node tools/build-sandbox.mjs   # single-file offline sandbox (client/dist-sandbox/kaiju-sandbox.html)
 ```
 

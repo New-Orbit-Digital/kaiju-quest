@@ -41,7 +41,7 @@ try {
   await sleep(6000);
   await phone.screenshot({ path: 'docs/shots/p06-koth-phone-kaiju.png', timeout: 120000 });
   await desk.screenshot({ path: 'docs/shots/p06-koth-desktop.png', timeout: 120000 });
-  const phoneButtons = await phone.evaluate(() => ['kq-smash', 'kq-kboost', 'kq-block'].map(id => `${id}:${!document.getElementById(id)?.hidden}`).join(' '));
+  const phoneButtons = await phone.evaluate(() => ['kq-kboost', 'kq-block'].map(id => `${id}:${!document.getElementById(id)?.hidden}`).join(' '));
   out(`phone kaiju buttons ${phoneButtons}`);
 
   await desk.close(); await phone.close();

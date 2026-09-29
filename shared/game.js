@@ -16,14 +16,21 @@
 //   'evac'  Evacuation — kaiju vs tanks over a fixed crowd of
 //           civilians. First side past half the crowd (stomped vs escaped)
 //           wins. Roadblocks are sturdy and unlimited.
+//
+//  Kaiju smashing has no button: hold a direction into a building (or a
+//  roadblock) for smashPushDelay, or tap a building on a phone (moveTo) to
+//  walk there and smash it. game.action() stays for bots and tests.
 // ─────────────────────────────────────────────────────────────
 import { TUNING, kaijuSpeedFor, kaijuMaxHpFor, boostMultiplierAt, scaled } from './tuning.js';
 import { parseCity, SPAWNS, EXITS } from './map.js';
 import { bfs, steer, cheapest } from './path.js';
-import { stepUnit, firstHit } from './sim.js';
+import { stepUnit, firstHit, tileWalkable } from './sim.js';
 
 const T = TUNING;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+// A tile path as a compact string for the clients to draw: "x,z;x,z;…"
+export const encodePath = (path) => path ? path.map(t => `${t.x},${t.z}`).join(';') : '';
+export const decodePath = (s) => s ? s.split(';').map(t => { const [x, z] = t.split(','); return { x: +x, z: +z }; }) : [];
 
 export const MODES = ['race', 'koth', 'evac'];
 export const MODE_NAMES = { race: 'Save the City!', koth: 'King of the Hill', evac: 'Evacuation' };
@@ -34,9 +41,9 @@ export const KAIJU_SEATS = 1 + TUNING.maxTanks;   // King of the Hill: everyone 
 export const plainMake = {
   player: () => ({ name: '', ready: false, afk: false, role: '', slot: -1, mobile: false, x: 0, z: 0, rot: 0, moving: false,
     alive: true, respawnIn: 0, boostIn: 0, boosting: false, strikeIn: 0, blockIn: 0, bot: false, repairing: false,
-    hp: 0, maxHp: 0, score: 0 }),
+    hp: 0, maxHp: 0, score: 0, route: '', routeBid: -1, windup: 0, aimX: 0, aimZ: 0 }),
   roadblock: () => ({ x: 0, z: 0, hits: 0, slot: 0, rot: 0 }),
-  civilian: () => ({ x: 0, z: 0, rot: 0, moving: false, look: 0 }),
+  civilian: () => ({ x: 0, z: 0, rot: 0, moving: false, look: 0, path: '' }),
   state: () => ({ phase: 'lobby', clock: 0, winner: '', kaijuScore: 0, tankScore: 0, kaijuSpeed: 0,
     players: new Map(), buildingHp: [], rebuildHp: [], cityHp: 1, roadblocks: new Map(),
     mode: '', hillX: 0, hillZ: 0, hillIn: 0, target: 0,
@@ -66,7 +73,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   const actions = new Set();       // ids that pressed SPACE (kaiju smash) since last tick
   const blockActions = new Set();  // ids that pressed SPACE / BLOCK since last tick (tanks)
   const boostActions = new Set();  // ids that pressed SHIFT since last tick (kaiju)
-  const timers = new Map();        // id → { fire, root, boostT } (server-only, not synced)
+  const timers = new Map();        // id → { fire, root, boostT, pushT, pushKey } (server-only, not synced)
+  const routes = new Map();        // id → tap-to-move route { path, goal, target, replanIn } (server-only)
   const lastActive = new Map();    // id → game time of last key press / stick move
   const rbOrder = new Map();       // tank id → roadblock keys, oldest first
   const repairFx = new Map();      // tank id → seconds until next repair effect
@@ -97,7 +105,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   const kaiju = () => { for (const p of state.players.values()) if (p.role === 'kaiju') return p; return null; };
   const tanks = () => [...state.players.values()].filter(p => p.role === 'tank');
   const idOf = (player) => { for (const [id, p] of state.players) if (p === player) return id; };
-  const timer = (id) => { if (!timers.has(id)) timers.set(id, { fire: 0, root: 0, boostT: 0 }); return timers.get(id); };
+  const timer = (id) => { if (!timers.has(id)) timers.set(id, { fire: 0, root: 0, boostT: 0, pushT: 0, pushKey: '' }); return timers.get(id); };
   const n = () => tanks().length;
 
   // ── Scoring ────────────────────────────────────────────────
@@ -208,6 +216,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     p.name = cleanName(opts.name) || `Player ${state.players.size + 1}`;
     p.ready = false; p.afk = false; p.mobile = !!opts.mobile; p.bot = !!opts.bot;
     p.alive = true; p.respawnIn = 0; p.boostIn = 0; p.boosting = false; p.strikeIn = 0; p.blockIn = 0; p.score = 0;
+    p.route = ''; p.routeBid = -1; p.windup = 0; p.aimX = 0; p.aimZ = 0;
     state.players.set(id, p);
     const asKaiju = koth() || (!kaiju() && !wantsTank);
     if (asKaiju) makeKaiju(p);
@@ -221,7 +230,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   function leave(id) {
     state.players.delete(id);
-    for (const m of [inputs, timers, lastActive, repairFx, rbOrder]) m.delete(id);
+    for (const m of [inputs, timers, lastActive, repairFx, rbOrder, routes]) m.delete(id);
     for (const s of [actions, blockActions, boostActions]) s.delete(id);
     rescale();
   }
@@ -230,7 +239,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const x = Number(v?.x), z = Number(v?.z);
     const v2 = { x: Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0,
                  z: Number.isFinite(z) ? Math.max(-1, Math.min(1, z)) : 0 };
-    if (v2.x || v2.z) touch(id);
+    if (v2.x || v2.z) { touch(id); if (routes.has(id)) clearRoute(id); }   // any stick / key input cancels a tap route
     inputs.set(id, v2);
   };
   const action = (id) => { actions.add(id); touch(id); };
@@ -327,8 +336,9 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     state.evacuated = 0; state.stomped = 0;
     state.bonus = ''; state.bonusIn = 0; state.healIn = 0;
     state.crateOn = false; state.crateIn = T.crateFirstSeconds; cratePath = null;
+    for (const id of [...routes.keys()]) clearRoute(id);
     for (const [id, p] of state.players) {
-      p.score = 0; p.boostIn = 0; p.strikeIn = 0; p.blockIn = 0;
+      p.score = 0; p.boostIn = 0; p.strikeIn = 0; p.blockIn = 0; p.windup = 0;
       if (p.role === 'kaiju') placeKaiju(p); else placeTank(p, id, SPAWNS.tanks[p.slot % SPAWNS.tanks.length]);
       timers.delete(id);
     }
@@ -433,9 +443,9 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     return best;
   }
 
-  function kaijuStrike(k, kid) {
+  function kaijuStrike(k, kid, forced = null) {
     if (k.strikeIn > 0 || !k.alive) return;
-    const target = strikeTarget(k);
+    const target = forced || strikeTarget(k);
     k.strikeIn = T.strikeCooldown;
     timer(kid).root = T.strikeRoot;
     if (!target) { emit('strike', { id: kid, bid: -1, x: k.x, z: k.z }); return; }
@@ -477,7 +487,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   // ── Kaiju down / respawn ───────────────────────────────────
   function downKaiju(k, kid, byId, respawn) {
-    k.alive = false; k.moving = false; k.boosting = false; k.hp = 0;
+    k.alive = false; k.moving = false; k.boosting = false; k.hp = 0; k.windup = 0;
+    clearRoute(kid);
     k.respawnIn = respawn;
     emit('kaijuDown', { id: kid, by: byId, x: k.x, z: k.z });
   }
@@ -573,6 +584,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
   function killTank(p, id, k, kid) {
     p.alive = false; p.moving = false; p.repairing = false;
     p.respawnIn = scaled('tankRespawn', n());
+    clearRoute(id);
     const pts = state.mode === 'race' ? kaijuPoints(k, scaled('tankCrushPoints', n())) : 0;
     emit('tankDown', { id, by: kid, x: p.x, z: p.z, points: pts });
   }
@@ -666,7 +678,9 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     const scared = k && k.alive && dist(c, k) < T.civilianPanicRange;
     const cost = (x, z) => (scared && Math.hypot(x - k.x, z - k.z) < 2.5 ? 40 : 1)
       * (state.roadblocks.has(rbKey(x, z)) ? T.civilianRoadblockCost : 1);
-    return cheapest(city, 'tank', sx, sz, exit.x, exit.z, { destroyed, cost });
+    const path = cheapest(city, 'tank', sx, sz, exit.x, exit.z, { destroyed, cost });
+    c.path = encodePath(path);   // drawn faintly on the ground (merged with the other civilians' routes)
+    return path;
   }
   const farthestExit = (s) => EXITS.reduce((a, e) => Math.hypot(e.x - s.x, e.z - s.z) > Math.hypot(a.x - s.x, a.z - s.z) ? e : a, EXITS[0]);
   function spawnCivilian(k) {
@@ -681,7 +695,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       });
       if (!nextTo) continue;
       const c = make.civilian();
-      c.x = s.x; c.z = s.z; c.rot = 0; c.moving = false; c.look = Math.floor(rng() * 1000);
+      c.x = s.x; c.z = s.z; c.rot = 0; c.moving = false; c.look = Math.floor(rng() * 1000); c.path = '';
       const id = `c${++civSeq}`;
       state.civilians.set(id, c);
       const exit = farthestExit(s);
@@ -722,9 +736,155 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
     if (civSpawned >= T.evacPool && !state.civilians.size) return endRound();
   }
 
+
+  // ── Kaiju smash targets ────────────────────────────────────
+  // What stands on tile (tx, tz) that a kaiju can smash: a roadblock or a
+  // standing building (never a park or rubble). Returns a strike target or null.
+  function tileTarget(tx, tz) {
+    const rb = state.roadblocks.get(rbKey(tx, tz));
+    if (rb) return { kind: 'roadblock', key: rbKey(tx, tz), rb, tx, tz };
+    const id = city.owner[tz]?.[tx];
+    if (id === undefined || id < 0) return null;
+    if (city.buildings[id].kind === 'park' || state.buildingHp[id] <= 0) return null;
+    return { kind: 'building', id, tx, tz };
+  }
+  const targetKey = (t) => t.kind === 'kaiju' ? `k:${t.id}` : `${t.kind}:${t.tx},${t.tz}`;
+
+  // Push-to-smash: the kaiju is pushing clearly into something it can smash
+  // and is stopped by it. "Clearly" = the same 2:1 axis rule stepUnit uses for
+  // turns (about 63° or more off the street). King of the Hill: pushing toward
+  // another kaiju in reach counts too (they don't block each other).
+  function pushTarget(p, id, inp, moved) {
+    if (!inp) return null;
+    const ax = Math.abs(inp.x), az = Math.abs(inp.z);
+    if (Math.hypot(ax, az) < 0.01) return null;
+    if (koth()) {
+      const len = Math.hypot(inp.x, inp.z);
+      for (const [oid, o] of state.players) {
+        if (oid === id || o.role !== 'kaiju' || !o.alive) continue;
+        const dx = o.x - p.x, dz = o.z - p.z, d = Math.hypot(dx, dz);
+        if (d > T.kothHitRange || d < 1e-6) continue;
+        if ((dx * inp.x + dz * inp.z) / (d * len) >= 0.7) return { kind: 'kaiju', id: oid, o, tx: o.x, tz: o.z };
+      }
+    }
+    if (moved) return null;                        // still rolling (sliding along a wall, nudging round a corner)
+    let dx = 0, dz = 0;
+    if (ax >= az * 2) dx = Math.sign(inp.x); else if (az >= ax * 2) dz = Math.sign(inp.z); else return null;
+    return tileTarget(Math.round(p.x) + dx, Math.round(p.z) + dz);
+  }
+  // Runs every tick for a live kaiju after it moves. The push has to be held on
+  // the same target for smashPushDelay; then it strikes at the strike cooldown.
+  function tickPushSmash(p, id, t, inp, moved, live) {
+    const target = live ? pushTarget(p, id, inp, moved) : null;
+    const key = target ? targetKey(target) : '';
+    if (!target) { t.pushT = 0; t.pushKey = ''; if (!routes.get(id)?.smashing) p.windup = 0; return; }
+    if (key !== t.pushKey) { t.pushKey = key; t.pushT = 0; }
+    t.pushT += tickDt;
+    p.windup = Math.min(1, t.pushT / Math.max(1e-6, T.smashPushDelay));
+    p.aimX = target.tx; p.aimZ = target.tz;
+    if (t.pushT >= T.smashPushDelay) kaijuStrike(p, id, target);
+  }
+
+  // ── Tap to move (phones) ───────────────────────────────────
+  // moveTo(id, {x, z}): walk along the streets to the tapped tile. Tapping a
+  // building (or, for the kaiju, a roadblock) walks to the nearest street tile
+  // beside it; the kaiju then smashes it until it's down. The server plans the
+  // route (BFS) and sends it back in player.route for the client to draw.
+  function clearRoute(id) {
+    routes.delete(id);
+    const p = state.players.get(id);
+    if (p) { if (p.route) p.route = ''; if (p.routeBid !== -1) p.routeBid = -1; }
+  }
+  function walkable(p, x, z) {
+    return tileWalkable(city, p.role, x, z, destroyed, p.role === 'kaiju' ? blocked : null);
+  }
+  function planRoute(p, r) {
+    const sx = Math.round(p.x), sz = Math.round(p.z);
+    const goals = r.goals;
+    const path = bfs(city, p.role, sx, sz, (x, z) => goals.has(`${x},${z}`),
+      { maxNodes: city.width * city.depth, destroyed, blocked: p.role === 'kaiju' ? blocked : null });
+    r.path = path; r.replanIn = T.tapReplanSeconds;
+    r.goal = path ? path[path.length - 1] : null;
+    p.route = encodePath(path);
+    return !!path;
+  }
+  function moveTo(id, msg) {
+    const p = state.players.get(id);
+    const tx = Math.round(Number(msg?.x)), tz = Math.round(Number(msg?.z));
+    touch(id);
+    if (!p || !p.alive || !Number.isFinite(tx) || !Number.isFinite(tz)) return false;
+    if (tx < 0 || tz < 0 || tx >= city.width || tz >= city.depth) return false;
+    const r = { goals: new Set(), target: null, path: null, goal: null, replanIn: 0, smashing: false };
+    // what was tapped: a smashable thing (kaiju) / a building (tanks park beside it) / ground
+    const hit = p.role === 'kaiju' ? tileTarget(tx, tz) : null;
+    const bid = city.owner[tz]?.[tx];
+    const building = bid !== undefined && bid >= 0 && city.buildings[bid].kind !== 'park' && state.buildingHp[bid] > 0 ? city.buildings[bid] : null;
+    const besideTiles = (tiles) => {
+      for (const [x, z] of tiles) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+        if (walkable(p, x + dx, z + dz)) r.goals.add(`${x + dx},${z + dz}`);
+    };
+    if (hit?.kind === 'roadblock') { r.target = { kind: 'roadblock', tx, tz }; besideTiles([[tx, tz]]); }
+    else if (building) {
+      const tiles = [];
+      for (let z = 0; z < building.size; z++) for (let x = 0; x < building.size; x++) tiles.push([building.x + x, building.z + z]);
+      besideTiles(tiles);
+      if (p.role === 'kaiju') r.target = { kind: 'building', bid: building.id };
+    } else if (walkable(p, tx, tz)) r.goals.add(`${tx},${tz}`);
+    else {   // not walkable for this unit (e.g. rubble for a tank): the nearest tile it can stand on
+      let best = null, bestD = Infinity;
+      for (let z = tz - 3; z <= tz + 3; z++) for (let x = tx - 3; x <= tx + 3; x++) {
+        const d = Math.hypot(x - tx, z - tz);
+        if (d < bestD && walkable(p, x, z)) { best = [x, z]; bestD = d; }
+      }
+      if (best) r.goals.add(`${best[0]},${best[1]}`);
+    }
+    if (!r.goals.size || !planRoute(p, r)) { clearRoute(id); return false; }
+    routes.set(id, r);
+    p.routeBid = r.target?.kind === 'building' ? r.target.bid : -1;
+    if (r.target) { p.aimX = r.target.tx ?? city.buildings[r.target.bid].cx; p.aimZ = r.target.tz ?? city.buildings[r.target.bid].cz; }
+    return true;
+  }
+  // The strike target for a route's building/roadblock: the piece of it in reach.
+  function routeStrikeTarget(p, r) {
+    const t = r.target;
+    if (t.kind === 'roadblock') return state.roadblocks.has(rbKey(t.tx, t.tz)) ? tileTarget(t.tx, t.tz) : null;
+    if (state.buildingHp[t.bid] <= 0) return null;
+    const b = city.buildings[t.bid];
+    let best = null, bestD = Infinity;
+    for (let z = 0; z < b.size; z++) for (let x = 0; x < b.size; x++) {
+      const d = Math.hypot(b.x + x - p.x, b.z + z - p.z);
+      if (d < bestD) { bestD = d; best = { kind: 'building', id: t.bid, tx: b.x + x, tz: b.z + z }; }
+    }
+    return bestD <= T.strikeRange + 0.35 ? best : null;
+  }
+  // Route input for this tick (null = no route). Also runs the kaiju's auto-smash.
+  function routeInput(p, id, live) {
+    const r = routes.get(id);
+    if (!r) return null;
+    if ((r.replanIn -= tickDt) <= 0 && !r.smashing && !planRoute(p, r)) { clearRoute(id); return null; }
+    const arrived = r.goal && Math.abs(r.goal.x - p.x) < 0.2 && Math.abs(r.goal.z - p.z) < 0.2;
+    if (!arrived && !r.smashing) return steer(p, r.path);
+    if (!r.target || p.role !== 'kaiju') { clearRoute(id); return { x: 0, z: 0 }; }
+    // kaiju at the building: smash until it's rubble (or the roadblock breaks)
+    r.smashing = true;
+    const target = routeStrikeTarget(p, r);
+    if (!target) {
+      const gone = r.target.kind === 'roadblock' ? !state.roadblocks.has(rbKey(r.target.tx, r.target.tz)) : state.buildingHp[r.target.bid] <= 0;
+      if (gone) clearRoute(id); else { r.smashing = false; planRoute(p, r); }
+      return { x: 0, z: 0 };
+    }
+    if (p.route) p.route = '';
+    p.aimX = target.tx; p.aimZ = target.tz; p.windup = 1;
+    if (live) kaijuStrike(p, id, target);
+    return { x: 0, z: 0 };
+  }
+
   // ── Tick ───────────────────────────────────────────────────
+  let tickDt = 1 / T.tickRate;
+  const phoneAssist = { lookahead: T.mobileCornerLookahead, nudge: T.mobileCornerNudge };
+  const assistFor = (p) => p.mobile ? phoneAssist : null;
   function tick(dt) {
-    now += dt;
+    now += dt; tickDt = dt;
 
     // AFK flags (shown in the lobby; AFK players don't block the start)
     for (const [id, p] of state.players) { const a = !p.bot && isAfk(id); if (p.afk !== a) p.afk = a; }
@@ -756,7 +916,7 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
           if (live && (p.respawnIn -= dt) <= 0) { placeKaiju(p, kaijuRespawnSpot(p)); emit('kaijuUp', { id }); }
           continue;
         }
-        if (live && actions.has(id)) kaijuStrike(p, id);
+        if (live && actions.has(id)) kaijuStrike(p, id);   // bots / tests (players smash by pushing)
         // boost: surge to boostPeak × speed, then ease back over boostSeconds
         if (boostActions.has(id) && p.boostIn <= 0 && state.phase !== 'ended') {
           p.boostIn = T.boostCooldown; t.boostT = 0; p.boosting = true;
@@ -764,8 +924,10 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
         }
         if (p.boosting && (t.boostT += dt) >= T.boostSeconds) p.boosting = false;
         const mult = p.boosting ? boostMultiplierAt(t.boostT) : 1;
-        const inp = t.root > 0 || state.phase === 'ended' ? null : inputs.get(id);
-        p.moving = stepUnit(city, p, inp, dt, state.kaijuSpeed * mult, T.kaijuRadius, destroyed, blocked);
+        const raw = state.phase === 'ended' ? null : (routeInput(p, id, live) || inputs.get(id));
+        const inp = t.root > 0 ? null : raw;
+        p.moving = stepUnit(city, p, inp, dt, state.kaijuSpeed * mult, T.kaijuRadius, destroyed, blocked, assistFor(p));
+        if (!routes.has(id)) tickPushSmash(p, id, t, raw, p.moving, live);   // manual input only, never a tap route
       } else {
         p.blockIn = Math.max(0, p.blockIn - dt);
         if (!p.alive) {
@@ -774,8 +936,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
           }
           continue;
         }
-        const inp = state.phase === 'ended' ? null : inputs.get(id);
-        p.moving = stepUnit(city, p, inp, dt, T.tankSpeed, T.tankRadius, destroyed);
+        const inp = state.phase === 'ended' ? null : (routeInput(p, id, live) || inputs.get(id));
+        p.moving = stepUnit(city, p, inp, dt, T.tankSpeed, T.tankRadius, destroyed, null, assistFor(p));
         if (live && blockActions.has(id)) dropRoadblock(p, id);
         if (live) repairNear(p, id, dt); else p.repairing = false;
       }
@@ -826,6 +988,6 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
 
   if (!MODES.includes(state.mode)) state.mode = T.defaultMode;
   rescale();
-  return { city, join, leave, input, action, block, boost, canSee, tick, destroyed, blocked, pickRespawn, teleport, healCity, maxHpOf,
+  return { city, join, leave, input, action, block, boost, moveTo, canSee, tick, destroyed, blocked, pickRespawn, teleport, healCity, maxHpOf,
            setName, setReady, setRole, setMode, isAfk, moveHill, spawnCrate, kaijus };
 }
