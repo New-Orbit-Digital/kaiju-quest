@@ -22,7 +22,7 @@ export const TUNING = {
   // Kaiju SMASH — no button: hold a direction into a building or roadblock (or,
   // in King of the Hill, toward another kaiju in reach), or tap a building on a
   // phone. Damage to buildings stays until a tank repairs it.
-  smashPushDelay:     0.25,  // seconds of pushing before the first smash (a shorter push
+  smashPushDelay:     0.15,  // seconds of pushing before the first smash (a shorter push
                              // just nudges you round corners). Needs a clear push: about
                              // 63° or more off the street's direction.
   strikeDamage:       10,    // building HP removed per smash
