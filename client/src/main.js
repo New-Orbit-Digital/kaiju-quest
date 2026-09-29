@@ -12,7 +12,7 @@ import { MODE_NAMES, BETA_MODES } from '../../shared/game.js';
 import { createHud } from './hud.js';
 import { createTouchControls } from './touch.js';
 import { createCivilianPaths, createRouteMarks } from './paths.js';
-import { stepUnit } from '../../shared/sim.js';
+import { stepUnit, collideUnits } from '../../shared/sim.js';
 
 const params = new URLSearchParams(location.search);
 const OFFLINE = !!globalThis.__KQ_OFFLINE || params.has('offline');
@@ -369,8 +369,14 @@ function predictMine(u, p, dt) {
   const speed = kaiju ? st.kaijuSpeed : TUNING.tankSpeed;
   const v = moveVector();
   const pushing = Math.hypot(v.x, v.z) > 0.01;
+  const ox = u.pred.x, oz = u.pred.z;
   u.pred.moving = stepUnit(city, u.pred, pushing ? v : null, dt, speed, kaiju ? TUNING.kaijuRadius : TUNING.tankRadius,
     destroyed, blocked, MOBILE ? phoneHelp : null);
+  if (kaiju && st.mode === 'koth' && u.pred.moving) {   // King of the Hill: kaiju collide (same rule as the server)
+    const others = [];
+    st.players.forEach((o, oid) => { if (oid !== room.sessionId && o.role === 'kaiju' && o.alive) others.push(units.get(oid)?.display || o); });
+    u.pred.moving = collideUnits(u.pred, ox, oz, others, 2 * TUNING.kaijuRadius);
+  }
   const ex = p.x - u.pred.x, ez = p.z - u.pred.z, e = Math.hypot(ex, ez);
   const budget = pushing ? speed * TUNING.predictionLag : 0;
   if (e > budget) {

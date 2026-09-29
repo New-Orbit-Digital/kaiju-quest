@@ -133,6 +133,24 @@ export function stepUnit(city, unit, input, dt, speed, r, destroyed, blocked, he
   return unit.x !== startX || unit.z !== startZ;
 }
 
+// Unit-vs-unit collision (King of the Hill kaiju). After a move from (ox, oz),
+// keep the unit out of every other body in `others` ([{x, z}]) by at least
+// minDist: if the move brought it closer to one it overlaps, keep only the
+// axis that doesn't (so it slides past), else undo the move. Moving apart is
+// always allowed (so units that spawn overlapping can separate).
+// Returns true if the unit ended up somewhere other than (ox, oz).
+export function collideUnits(unit, ox, oz, others, minDist) {
+  const bad = (x, z) => others.some(o => {
+    const d = Math.hypot(x - o.x, z - o.z);
+    return d < minDist && d < Math.hypot(ox - o.x, oz - o.z) - 1e-9;
+  });
+  if (!bad(unit.x, unit.z)) return unit.x !== ox || unit.z !== oz;
+  if (!bad(unit.x, oz)) { unit.z = oz; return unit.x !== ox; }
+  if (!bad(ox, unit.z)) { unit.x = ox; return unit.z !== oz; }
+  unit.x = ox; unit.z = oz;
+  return false;
+}
+
 // Line of sight for tank shells. Walks the segment a→b and returns the first
 // point inside a standing building (the lot minus its sidewalk), or null if
 // the line is clear. blocks(id) → true if building id stops shells.

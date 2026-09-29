@@ -24,7 +24,7 @@
 import { TUNING, kaijuSpeedFor, kaijuMaxHpFor, boostMultiplierAt, scaled } from './tuning.js';
 import { parseCity, SPAWNS, EXITS } from './map.js';
 import { bfs, steer, cheapest } from './path.js';
-import { stepUnit, firstHit, tileWalkable } from './sim.js';
+import { stepUnit, firstHit, tileWalkable, collideUnits } from './sim.js';
 
 const T = TUNING;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -768,6 +768,8 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
       }
     }
     if (moved) return null;                        // still rolling (sliding along a wall, nudging round a corner)
+    // (kaiju don't block buildings' tiles, so the KOTH check above runs first: a kaiju
+    //  pressed against another one — they collide in King of the Hill — hits it)
     let dx = 0, dz = 0;
     if (ax >= az * 2) dx = Math.sign(inp.x); else if (az >= ax * 2) dz = Math.sign(inp.z); else return null;
     return tileTarget(Math.round(p.x) + dx, Math.round(p.z) + dz);
@@ -926,7 +928,15 @@ export function createGame({ state, make = plainMake, emit = () => {}, rng = Mat
         const mult = p.boosting ? boostMultiplierAt(t.boostT) : 1;
         const raw = state.phase === 'ended' ? null : (routeInput(p, id, live) || inputs.get(id));
         const inp = t.root > 0 ? null : raw;
+        const ox = p.x, oz = p.z;
         p.moving = stepUnit(city, p, inp, dt, state.kaijuSpeed * mult, T.kaijuRadius, destroyed, blocked, assistFor(p));
+        // King of the Hill: kaiju bump into each other instead of walking through
+        // (then pushing toward one hits it: see pushTarget)
+        if (koth() && p.moving) {
+          const others = [];
+          for (const [oid, o] of state.players) if (oid !== id && o.role === 'kaiju' && o.alive) others.push(o);
+          if (others.length) p.moving = collideUnits(p, ox, oz, others, 2 * T.kaijuRadius);
+        }
         if (!routes.has(id)) tickPushSmash(p, id, t, raw, p.moving, live);   // manual input only, never a tap route
       } else {
         p.blockIn = Math.max(0, p.blockIn - dt);

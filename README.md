@@ -2,7 +2,7 @@
 
 Online multiplayer, isometric city smash-up. One player is the **kaiju**, knocking down buildings for points. Up to six players drive **tanks**, repairing the city and gunning the kaiju down. WASD + Space (tank roadblock) + Shift (kaiju boost), or a controller (left stick moves, A drops a roadblock, RB boosts), or a phone (either side). Tanks only fire when no building is in the way.
 
-**The kaiju has no smash button:** it stomps on buildings by pushing into them. Hold a direction into a building or roadblock for a quarter of a second (`smashPushDelay`) and it smashes it every strike cooldown for as long as you hold; a shorter push still slides you round corners. In King of the Hill, pushing toward another kaiju in reach hits it.
+**The kaiju has no smash button:** it stomps on buildings by pushing into them. Hold a direction into a building or roadblock for a quarter of a second (`smashPushDelay`) and it smashes it every strike cooldown for as long as you hold; a shorter push still slides you round corners. In King of the Hill the kaiju collide (they can't walk through each other) and pushing into another kaiju hits it.
 
 **Phones:** tap anywhere to walk there along the streets (as the kaiju, tap a building to walk up and smash it to rubble; your route and target show on the ground). Drag anywhere for a floating stick that appears under your thumb, follows it if you drag past its edge, snaps to the streets as drawn on screen, and cancels any tap route. BLOCK (tanks) / BOOST (kaiju) sit bottom right. Phones get a little more cornering help (`mobileCornerLookahead`, `mobileCornerNudge`). On every device your own unit moves the instant you press (`clientPrediction`) and eases onto the server's position.
 

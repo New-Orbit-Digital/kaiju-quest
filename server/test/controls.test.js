@@ -169,3 +169,26 @@ test('evacuation: every civilian carries its planned path, ending at its farthes
     assert.ok(EXITS.some(e => e.x === end.x && e.z === end.z), 'ends at an exit');
   }
 });
+
+test('king of the hill: kaiju collide instead of walking through each other, and pushing into one hits it', () => {
+  const state = plainMake.state();
+  const g = createGame({ state });
+  g.setMode(null, 'koth');
+  g.join('A', {}); g.join('B', {});
+  for (const id of state.players.keys()) g.setReady(id, true);
+  const run = (sec) => { for (let t = 0; t < sec - 1e-9; t += 0.05) g.tick(0.05); };
+  run(T.countdownSeconds + 0.1);
+  assert.equal(state.phase, 'playing');
+  const A = state.players.get('A'), B = state.players.get('B');
+  A.x = 12; A.z = 12; B.x = 16; B.z = 12;                // same street (row 12), facing each other
+  g.input('A', { x: 1, z: 0 }); g.input('B', { x: -1, z: 0 });
+  let closest = Infinity;
+  for (let i = 0; i < 40; i++) { g.tick(0.05); closest = Math.min(closest, Math.hypot(A.x - B.x, A.z - B.z)); }
+  assert.ok(closest >= 2 * T.kaijuRadius - 1e-6, `never overlapped (closest ${closest.toFixed(3)})`);
+  assert.ok(A.x < B.x, 'nobody passed through');
+  assert.ok(A.hp < T.kothHp && B.hp < T.kothHp, `both pushing → both hit (A ${A.hp}, B ${B.hp})`);
+  // a kaiju that's down can be walked over
+  B.alive = false; B.x = A.x + 1; B.z = 12;
+  const ax = A.x; run(0.6);
+  assert.ok(A.x > ax + 1, 'walks over a knocked-out kaiju');
+});
